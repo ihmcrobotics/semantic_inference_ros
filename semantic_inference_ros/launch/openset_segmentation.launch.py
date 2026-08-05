@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+"""Launch the ROS 2 open-set RGB-D segmentation node."""
 
 from pathlib import Path
 
@@ -14,14 +15,13 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description() -> LaunchDescription:
+    """Create the open-set segmentation launch description."""
     semantic_inference_ros_share = Path(
         get_package_share_directory("semantic_inference_ros")
     )
+
     semantic_inference_share = Path(
         get_package_share_directory("semantic_inference")
-    )
-    hydra_share = Path(
-        get_package_share_directory("hydra")
     )
 
     config_path = LaunchConfiguration("config_path")
@@ -80,22 +80,24 @@ def generate_launch_description() -> LaunchDescription:
                     / "config"
                     / "openset_segmentation.yaml"
                 ),
-                description="Configuration file for object detector",
+                description=(
+                    "Main configuration file for open-set segmentation"
+                ),
             ),
             DeclareLaunchArgument(
                 "min_separation_s",
                 default_value="0.5",
-                description="Minimum time between input images",
+                description="Minimum time between processed RGB-D frames",
             ),
             DeclareLaunchArgument(
                 "yolo_model_name",
                 default_value="yoloe-11l-seg.pt",
-                description="Name of the YOLO model to use",
+                description="YOLO model used by the segmentation backend",
             ),
             DeclareLaunchArgument(
                 "labelspace_name",
                 default_value="ade20k_full",
-                description="Semantic label space",
+                description="Semantic label-space name",
             ),
             DeclareLaunchArgument(
                 "colormap_path",
@@ -104,7 +106,7 @@ def generate_launch_description() -> LaunchDescription:
                     / "config"
                     / "distinct_150_colors.csv"
                 ),
-                description="Visualization colormap",
+                description="Visualization colormap CSV file",
             ),
             DeclareLaunchArgument(
                 "model_name",
@@ -114,12 +116,14 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument(
                 "segmentation_model",
                 default_value="yoloe",
-                description="Open-vocabulary segmentation model type",
+                description=(
+                    "Open-vocabulary segmentation backend type"
+                ),
             ),
             DeclareLaunchArgument(
                 "segmentation_cuda",
                 default_value="true",
-                description="Use CUDA for open-vocabulary segmentation",
+                description="Use CUDA for segmentation inference",
             ),
             DeclareLaunchArgument(
                 "segmentation_model_name",
@@ -129,26 +133,30 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument(
                 "labelspace_dir",
                 default_value=str(
-                    hydra_share
+                    semantic_inference_ros_share
                     / "config"
                     / "label_spaces"
                 ),
-                description="Directory containing label-space YAML files",
+                description=(
+                    "Directory containing label-space YAML files"
+                ),
             ),
             DeclareLaunchArgument(
                 "playback_mode",
                 default_value="false",
-                description="Run in playback mode with compressed images",
+                description=(
+                    "Use compressed image messages during playback"
+                ),
             ),
             DeclareLaunchArgument(
                 "print_inference_time",
                 default_value="false",
-                description="Print inference time",
+                description="Print segmentation inference timing",
             ),
             DeclareLaunchArgument(
                 "camera_info_topic",
                 default_value="/camera/color/camera_info",
-                description="Input camera-info topic",
+                description="Input RGB camera-info topic",
             ),
             Node(
                 package="semantic_inference_ros",

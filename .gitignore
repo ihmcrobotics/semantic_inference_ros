@@ -215,3 +215,29 @@ compile_commands.json
 *.sarif
 
 *.pt
+
+### ROS 2 / Colcon ###
+install/
+log/
+
+### Downloaded and generated ML models ###
+/mobileclip_blt.ts
+*.pth
+*.ckpt
+*.onnx
+*.engine
+*.plan
+*.trt
+*.torchscript
+
+### Model and framework caches ###
+.cache/
+.huggingface/
+.torch/
+wandb/
+runs/
+
+### Editors and operating system ###
+.vscode/
+.idea/
+.DS_Store
