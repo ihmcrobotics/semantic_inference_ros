@@ -1,65 +1,116 @@
 #!/usr/bin/env python3
-"""Node that extracts VLM features."""
+"""ROS 2 dummy VLM node that publishes empty feature messages."""
+
 from dataclasses import dataclass, field
 
-import rospy
-import semantic_inference_ros
 import numpy as np
+import rclpy
+from rclpy.node import Node
 
-from semantic_inference_python import Config
+import semantic_inference_ros
 
 from semantic_inference_msgs.msg import FeatureVectorsStamped
+from semantic_inference_python import Config
 from semantic_inference_ros import Conversions, SyncImagesWorkerConfig
-from sensor_msgs.msg import Image, CompressedImage
+from sensor_msgs.msg import CompressedImage, Image
 
 
 @dataclass
 class VLMFeatureNodeConfig(Config):
-    """Configuration for CLIPFeaturesNode."""
+    """Configuration for the dummy VLM node."""
 
-    worker: SyncImagesWorkerConfig = field(default_factory=SyncImagesWorkerConfig)
+    worker: SyncImagesWorkerConfig = field(
+        default_factory=SyncImagesWorkerConfig
+    )
     playback_mode: bool = False
 
 
-class DummyVLMNode:
-    """Dummy nodde to publish empty feats."""
+class DummyVLMNode(Node):
+    """Publish empty VLM relationship features for incoming images."""
 
-    def __init__(self):
-        """Initialize the node."""
-        self.config = semantic_inference_ros.load_from_ros(VLMFeatureNodeConfig, ns="~")
-        rospy.loginfo(f"'{rospy.get_name()}': Initializing with {self.config.show()}")
+    def __init__(self) -> None:
+        """Initialize configuration, publisher, and synchronized worker."""
+        super().__init__("dummy_vlm_node")
 
-        self._vlm_pub = rospy.Publisher(
-            "relation_features",
+        self.config = semantic_inference_ros.load_from_ros2(
+            VLMFeatureNodeConfig,
+            self,
+        )
+
+        self.get_logger().info(
+            f"'{self.get_name()}': Initializing with "
+            f"{self.config.show()}"
+        )
+
+        self._vlm_pub = self.create_publisher(
             FeatureVectorsStamped,
-            queue_size=20,
+            "relation_features",
+            20,
+        )
+
+        message_types = (
+            [Image]
+            if not self.config.playback_mode
+            else [CompressedImage]
         )
 
         self._worker = semantic_inference_ros.SyncImagesWorker(
-            self.config.worker,
-            [
+            node=self,
+            config=self.config.worker,
+            topics=[
                 "color/image_raw",
             ],
-            [Image] if not self.config.playback_mode else [CompressedImage],
-            self._spin_once,
+            message_types=message_types,
+            callback=self._spin_once,
         )
-        rospy.loginfo(f"'{rospy.get_name()}': Initialized")
 
-    def _spin_once(self, header, _: np.ndarray):
-        self._vlm_pub.publish(Conversions.to_stamped_features(header, [], None))
+        self.get_logger().info(
+            f"'{self.get_name()}': Initialized"
+        )
 
-    def spin(self):
-        """Wait until ros shuts down."""
-        self._worker.spin()
+    def _spin_once(
+        self,
+        header,
+        _image: np.ndarray,
+    ) -> None:
+        """Publish an empty feature message for the received image."""
+        message = Conversions.to_stamped_features(
+            header,
+            [],
+            None,
+        )
+
+        self._vlm_pub.publish(message)
+
+    def shutdown(self) -> None:
+        """Stop the synchronized-image worker."""
+        if hasattr(self, "_worker") and self._worker is not None:
+            stop_method = getattr(
+                self._worker,
+                "stop",
+                None,
+            )
+
+            if callable(stop_method):
+                stop_method()
 
 
-def main():
-    """Start a node."""
-    rospy.init_node("dummy_vlm_node")
-    semantic_inference_ros.setup_ros_log_forwarding()
+def main(args=None) -> None:
+    """Start the ROS 2 dummy VLM node."""
+    rclpy.init(args=args)
 
     node = DummyVLMNode()
-    node.spin()
+
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.shutdown()
+        node.destroy_node()
+
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

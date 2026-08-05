@@ -1,97 +1,162 @@
 #!/usr/bin/env python3
-"""Node to provide navigation prompts."""
+"""ROS 2 node that provides navigation prompts."""
+
 from dataclasses import dataclass
 from typing import Any
 
-import rospy
-from semantic_inference_msgs.srv import NavigationPrompt, NavigationPromptResponse
+import rclpy
+from rclpy.node import Node
+
 from semantic_inference_msgs.msg import (
     FeatureVectorStamped,
     NavigationPromptsEmbeddings,
     ObjectsPromptPair,
 )
+from semantic_inference_msgs.srv import NavigationPrompt
 
 import semantic_inference_ros
-from semantic_inference_ros.ros_conversions import Conversions
 from semantic_inference_python import Config, config_field
+from semantic_inference_ros.ros_conversions import Conversions
 
 
 @dataclass
 class NavigationPromptNodeConfig(Config):
     """Configuration for NavigationPromptNode."""
 
-    navigation_prompter: Any = config_field("navigation_prompter", default="openai")
+    navigation_prompter: Any = config_field(
+        "navigation_prompter",
+        default="openai",
+    )
 
 
-class NavigationPromptNode:
-    """Node implementation."""
+class NavigationPromptNode(Node):
+    """ROS 2 navigation-prompt service node."""
 
-    def __init__(self):
-        """Construct a feature encoder node."""
-        self.config = semantic_inference_ros.load_from_ros(
-            NavigationPromptNodeConfig, ns="~"
+    def __init__(self) -> None:
+        """Initialize the prompt generator, service, and publisher."""
+        super().__init__("navigation_prompt_service")
+
+        self.config = semantic_inference_ros.load_from_ros2(
+            NavigationPromptNodeConfig,
+            self,
         )
 
-        rospy.loginfo(f"'{rospy.get_name()}': Initializing with {self.config.show()}")
-        self._service = self.config.navigation_prompter.create()
-        rospy.loginfo(f"'{rospy.get_name()}': finished initializing!")
-        self._srv = rospy.Service(
-            "~navigation_prompt", NavigationPrompt, self._callback
-        )
-        self._pub = rospy.Publisher(
-            "~navigation_embeddings", NavigationPromptsEmbeddings, queue_size=1
+        self.get_logger().info(
+            f"'{self.get_name()}': Initializing with "
+            f"{self.config.show()}"
         )
 
-    def _callback(self, req: NavigationPrompt) -> NavigationPromptResponse:
-        """Handle incoming requests."""
-        res = NavigationPromptResponse()
-        msg = NavigationPromptsEmbeddings()
+        self._prompter = self.config.navigation_prompter.create()
+
+        self._srv = self.create_service(
+            NavigationPrompt,
+            "navigation_prompt",
+            self._callback,
+        )
+
+        self._pub = self.create_publisher(
+            NavigationPromptsEmbeddings,
+            "navigation_embeddings",
+            1,
+        )
+
+        self.get_logger().info(
+            f"'{self.get_name()}': finished initializing!"
+        )
+
+    def _callback(
+        self,
+        request: NavigationPrompt.Request,
+        response: NavigationPrompt.Response,
+    ) -> NavigationPrompt.Response:
+        """Handle a navigation-prompt request."""
         output: semantic_inference_ros.NavigationPrompterOutput = (
-            self._service.generate(req.prompt, req.room)
+            self._prompter.generate(
+                request.prompt,
+                request.room,
+            )
         )
+
         if not output.success:
-            res.error = output.error
-            rospy.logerr(f"Error generating navigation prompt: {output.error}")
-            return res
+            response.error = output.error
 
-        msg.room = output.room
-        msg.prompt = output.prompt
-        msg.objects = output.objects
-        msg.object_search = len(output.objects_prompt_pairs) == 0
-        msg.text_room_embedding = FeatureVectorStamped()
-        msg.text_room_embedding.header.stamp = rospy.Time.now()
-        msg.text_room_embedding.feature = Conversions.to_feature(output.room_embedding)
-        msg.text_object_embedding = []
-        for obj_embedding in output.objects_embeddings:
-            embedding = FeatureVectorStamped()
-            embedding.header.stamp = rospy.Time.now()
-            embedding.feature = Conversions.to_feature(obj_embedding)
-            msg.text_object_embedding.append(embedding)
+            self.get_logger().error(
+                "Error generating navigation prompt: "
+                f"{output.error}"
+            )
 
-        msg.objects_prompt_pairs = []
+            return response
+
+        message = NavigationPromptsEmbeddings()
+
+        message.room = output.room
+        message.prompt = output.prompt
+        message.objects = list(output.objects)
+        message.object_search = (
+            len(output.objects_prompt_pairs) == 0
+        )
+
+        current_stamp = self.get_clock().now().to_msg()
+
+        message.text_room_embedding = FeatureVectorStamped()
+        message.text_room_embedding.header.stamp = current_stamp
+        message.text_room_embedding.feature = (
+            Conversions.to_feature(
+                output.room_embedding
+            )
+        )
+
+        message.text_object_embedding = []
+
+        for object_embedding in output.objects_embeddings:
+            embedding_message = FeatureVectorStamped()
+            embedding_message.header.stamp = (
+                self.get_clock().now().to_msg()
+            )
+            embedding_message.feature = (
+                Conversions.to_feature(
+                    object_embedding
+                )
+            )
+
+            message.text_object_embedding.append(
+                embedding_message
+            )
+
+        message.objects_prompt_pairs = []
+
         for object_prompt_pair in output.objects_prompt_pairs:
-            pair = ObjectsPromptPair()
-            pair.object = object_prompt_pair.object
-            pair.subject = object_prompt_pair.subject
-            pair.prompt = object_prompt_pair.prompt
-            msg.objects_prompt_pairs.append(pair)
+            pair_message = ObjectsPromptPair()
+            pair_message.object = object_prompt_pair.object
+            pair_message.subject = object_prompt_pair.subject
+            pair_message.prompt = object_prompt_pair.prompt
 
-        res.response = msg
-        self._pub.publish(msg)
-        return res
+            message.objects_prompt_pairs.append(
+                pair_message
+            )
 
-    def spin(self):
-        """Wait until ROS shuts down."""
-        rospy.spin()
+        response.response = message
+
+        self._pub.publish(message)
+
+        return response
 
 
-def main():
-    """Start the node."""
-    rospy.init_node("navigation_prompt_service")
-    semantic_inference_ros.setup_ros_log_forwarding()
+def main(args=None) -> None:
+    """Start the ROS 2 navigation-prompt node."""
+    rclpy.init(args=args)
 
     node = NavigationPromptNode()
-    node.spin()
+
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

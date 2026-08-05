@@ -1,5 +1,5 @@
-# Copyright (c) 2025, Autonomous Robots Lab, Norwegian University of Science and
-# Technology All rights reserved.
+# Copyright (c) 2026, IHMC Robotics Lab.
+# All rights reserved.
 
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree
@@ -11,10 +11,10 @@ from PIL import Image
 from pathlib import Path
 import torch.nn as nn
 
-IMAGE_PATH = "/home/arl/sdcard/hydra_bags/image.png"
+IMAGE_PATH = "/home/ihmc/sdcard/hydra_bags/image.png"
 MODEL_NAME = "MobileCLIP-S2"  # open_clip uses dashes not slashes
 PRETRAINED_NAME = "datacompdr"
-EXPORT_ONNX_PATH = f"/home/arl/jetson_ssd/cache/open_clip/{MODEL_NAME}"
+EXPORT_ONNX_PATH = f"/home/ihmc/jetson_ssd/cache/open_clip/{MODEL_NAME}"
 Path(EXPORT_ONNX_PATH).mkdir(parents=True, exist_ok=True)
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -49,7 +49,7 @@ torch.onnx.export(
     opset_version=14,
     do_constant_folding=True,
 )
-print("✅ Exported image encoder.")
+print("Exported image encoder.")
 print(
     f"""
 🚀 You can now build TensorRT engines using:

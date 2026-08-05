@@ -1,18 +1,28 @@
 <?xml version="1.0"?>
-<package format="2">
+<package format="3">
   <name>semantic_inference</name>
   <version>0.0.1</version>
-  <description>Package wrapping tensort for semantic segmentation</description>
 
-  <maintainer email="na26933@mit.edu">Nathan Hughes</maintainer>
-  <author email="na26933@mit.edu">Nathan Hughes</author>
+  <description>
+    Package wrapping TensorRT for semantic segmentation
+  </description>
+
+  <maintainer email="achatterjee@ihmc.org">
+    Arghya Chatterjee
+  </maintainer>
+
+  <author email="achatterjee@ihmc.org">
+    Arghya Chatterjee
+  </author>
+
   <license>TODO</license>
 
-  <buildtool_depend>cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
   <depend>config_utilities</depend>
   <depend>libopencv-dev</depend>
 
   <export>
-      <build_type>cmake</build_type>
+    <build_type>ament_cmake</build_type>
   </export>
 </package>

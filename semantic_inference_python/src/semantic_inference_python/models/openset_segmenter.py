@@ -32,8 +32,8 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 # --------------------------------------------------------------------------
 
-# Copyright (c) 2025, Autonomous Robots Lab, Norwegian University of Science and
-# Technology All rights reserved.
+# Copyright (c) 2026, IHMC Robotics Lab.
+# All rights reserved.
 
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree
@@ -61,8 +61,11 @@ from typing import Any, List
 from supervision.draw.color import ColorPalette
 from dataclasses import dataclass, field
 import time
-import rospy
+import rclpy
+from rclpy.logging import get_logger
 
+
+logger = get_logger("openset_segmenter")
 
 def _default_extractor():
     return PatchExtractor.Config(crop_padding=4)
@@ -321,7 +324,7 @@ class OpensetSegmenter(nn.Module):
 
         use_depth = np.any(depth > 0)
         if self.config.segmentation.verbose:
-            rospy.loginfo(
+            logger.info(
                 f"[Open vocabulary node] CLIP initial preprocessing: {(time.time() - start_time) * 1000:.3f} ms"
             )
         start_time = time.time()
@@ -353,7 +356,7 @@ class OpensetSegmenter(nn.Module):
         object_boxes = torch.stack(object_boxes)
         object_masks = torch.stack(object_masks)
         if self.config.segmentation.verbose:
-            rospy.loginfo(
+            logger.info(
                 f"[Open vocabulary node] Mask filtering time: {(time.time() - start_time) * 1000:.3f} ms"
             )
         masks_to_use = object_masks if self.dense_encoder is None else None
@@ -362,7 +365,7 @@ class OpensetSegmenter(nn.Module):
             img, bboxes=object_boxes, masks=masks_to_use
         )
         if self.config.segmentation.verbose:
-            rospy.loginfo(
+            logger.info(
                 f"[Open vocabulary node] Patch extraction time: {(time.time() - start_time) * 1000:.3f} ms"
             )
         start_time = time.time()
@@ -418,13 +421,13 @@ class OpensetSegmenter(nn.Module):
             self.device
         )
         if self.config.segmentation.verbose:
-            rospy.loginfo(
+            logger.info(
                 f"[Open vocabulary node] Patch selection time: {(time.time() - start_time) * 1000:.3f} ms"
             )
         start_time = time.time()
         img = self.preprocess(img)
         if self.config.segmentation.verbose:
-            rospy.loginfo(
+            logger.info(
                 f"[Open vocabulary node] Image preprocessing time: {(time.time() - start_time) * 1000:.3f} ms"
             )
 
@@ -432,7 +435,7 @@ class OpensetSegmenter(nn.Module):
         start_time = time.time()
         clip_img = center_crop(img, self.encoder.input_size)
         if self.config.segmentation.verbose:
-            rospy.loginfo(
+            logger.info(
                 f"[Open vocabulary node] CLIP center crop time: {(time.time() - start_time) * 1000:.3f} ms"
             )
         start_time = time.time()
@@ -464,7 +467,7 @@ class OpensetSegmenter(nn.Module):
                 patch_boxes
             ) + ratios * dense_features
         if self.config.segmentation.verbose:
-            rospy.loginfo(
+            logger.info(
                 f"[Open vocabulary node] CLIP model inference time: {(time.time() - start_time) * 1000:.3f} ms"
             )
         panoptic_ids = (
@@ -505,7 +508,7 @@ class OpensetSegmenter(nn.Module):
             rgb_img, device=self.device
         )
         if self.config.segmentation.verbose:
-            rospy.loginfo(
+            logger.info(
                 f"[Open vocabulary node] Segmentation inference time: {(time.time() - start_time) * 1000:.3f} ms"
             )
 
@@ -534,7 +537,7 @@ class OpensetSegmenter(nn.Module):
             confs,
         ) = self.segment_refinement(masks, boxes, labels, feature_image, confs)
         if self.config.segmentation.verbose:
-            rospy.loginfo(
+            logger.info(
                 f"[Open vocabulary node] Segmentation refinement time: {(time.time() - start_time) * 1000:.3f} ms"
             )
 
@@ -559,7 +562,7 @@ class OpensetSegmenter(nn.Module):
             img, depth, masks, boxes, labels, feature_image, panoptic_image
         )
         if self.config.segmentation.verbose:
-            rospy.loginfo(
+            logger.info(
                 f"[Open vocabulary node] Total CLIP inference time: {(time.time() - start_time) * 1000:.3f} ms"
             )
 

@@ -1,5 +1,5 @@
-# Copyright (c) 2025, Autonomous Robots Lab, Norwegian University of Science and
-# Technology All rights reserved.
+# Copyright (c) 2026, IHMC Robotics Lab.
+# All rights reserved.
 
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree
@@ -11,14 +11,16 @@ import torch
 from torch import nn
 import torchvision
 import numpy as np
+from rclpy.logging import get_logger
 import supervision as sv
 from supervision.draw.color import ColorPalette, Color
-import rospy
 import time
-import rospy
 
 from typing import Any, List, Set, Optional, Tuple
 from dataclasses import dataclass, field, replace
+
+
+LOGGER = get_logger("vlm_feature_extractor")
 
 
 @dataclass(frozen=True)
@@ -386,7 +388,7 @@ class VLMFeatureExtractor(nn.Module):
                         bboxes, masks, depth, camera_matrix, transform
                     )
                     if self.config.verbose:
-                        rospy.loginfo(
+                        LOGGER.info(
                             f"[VLM node] Graph-aware selection time: {(time.time() - start_time) * 1000:.3f} ms"
                         )
             elif not choice:
@@ -443,7 +445,7 @@ class VLMFeatureExtractor(nn.Module):
                 ]
         if len(union_imgs) == 0:
             if self.config.verbose:
-                rospy.logwarn("[VLM] No images found")
+                LOGGER.warning("[VLM] No images found")
             return None, None, None
 
         annotated_image = None
@@ -466,7 +468,7 @@ class VLMFeatureExtractor(nn.Module):
         with torch.inference_mode():
             res = self.encoder.encode_images(union_imgs).cpu()
         if self.config.verbose:
-            rospy.loginfo(
+            LOGGER.info(
                 f"[VLM node] BLIP inference time: {(time.time() - start_time) * 1000:.3f} ms"
             )
         return (
@@ -528,7 +530,7 @@ class VLMFeatureExtractor(nn.Module):
         ]
         if len(masks_colors) == 0:
             if self.config.verbose:
-                rospy.logwarn("[VLM] No masks found")
+                LOGGER.warning("[VLM] No masks found")
             return None, None, None
         masks = torch.cat([mask for mask, _ in masks_colors], dim=0)
         colors = np.array([color for _, color in masks_colors])

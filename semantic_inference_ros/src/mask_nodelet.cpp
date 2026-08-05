@@ -27,7 +27,7 @@
  * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
  * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- * * -------------------------------------------------------------------------- */
+ * -------------------------------------------------------------------------- */
 
 /* -----------------------------------------------------------------------------
  * Copyright 2022 Massachusetts Institute of Technology.
@@ -63,63 +63,166 @@
  * Government is authorized to reproduce and distribute reprints for Government
  * purposes notwithstanding any copyright notation herein.
  * -------------------------------------------------------------------------- */
-#include <cv_bridge/cv_bridge.h>
-#include <image_transport/image_transport.h>
-#include <nodelet/nodelet.h>
-#include <pluginlib/class_list_macros.h>
+
+// Copyright (c) 2026, IHMC Robotics Lab.
+// All rights reserved.
+//
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree.
+
+#include <cv_bridge/cv_bridge.hpp>
+#include <image_transport/image_transport.hpp>
+
+#include <rclcpp/rclcpp.hpp>
+#include <rclcpp_components/register_node_macro.hpp>
+#include <rmw/qos_profiles.h>
+
+#include <sensor_msgs/msg/image.hpp>
 
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
 
-namespace semantic_inference {
+#include <functional>
+#include <memory>
+#include <stdexcept>
+#include <string>
 
-struct MaskNodelet : public nodelet::Nodelet {
-  void onInit() {
-    auto& pnh = getPrivateNodeHandle();
+namespace semantic_inference
+{
 
-    std::string mask_path = "";
-    if (!pnh.getParam("mask_path", mask_path)) {
-      ROS_FATAL("mask path is required!");
-      throw std::runtime_error("mask path not specified");
+class MaskNode : public rclcpp::Node
+{
+public:
+  explicit MaskNode(const rclcpp::NodeOptions& options)
+      : rclcpp::Node("mask", options)
+  {
+    declare_parameter<std::string>("mask_path", "");
+
+    const std::string mask_path =
+        get_parameter("mask_path").as_string();
+
+    if (mask_path.empty())
+    {
+      RCLCPP_FATAL(
+          get_logger(),
+          "Parameter 'mask_path' is required");
+
+      throw std::runtime_error(
+          "mask_path parameter was not specified");
     }
 
-    ROS_INFO_STREAM("Reading mask from " << mask_path);
-    mask_ = cv::imread(mask_path, cv::IMREAD_GRAYSCALE);
-    if (mask_.empty()) {
-      ROS_FATAL("invalid mask; mat is empty");
-      throw std::runtime_error("invalid mask!");
+    RCLCPP_INFO(
+        get_logger(),
+        "Reading mask from %s",
+        mask_path.c_str());
+
+    mask_ = cv::imread(
+        mask_path,
+        cv::IMREAD_GRAYSCALE);
+
+    if (mask_.empty())
+    {
+      RCLCPP_FATAL(
+          get_logger(),
+          "Failed to load mask from '%s'",
+          mask_path.c_str());
+
+      throw std::runtime_error(
+          "Invalid mask: loaded image is empty");
     }
 
-    auto& nh = getNodeHandle();
-    transport_.reset(new image_transport::ImageTransport(nh));
-    sub_ = transport_->subscribe("input/image_raw", 1, &MaskNodelet::callback, this);
-    pub_ = transport_->advertise("masked/image_raw", 1);
+    sub_ = image_transport::create_subscription(
+        this,
+        "input/image_raw",
+        std::bind(
+            &MaskNode::callback,
+            this,
+            std::placeholders::_1),
+        "raw",
+        rmw_qos_profile_sensor_data);
+
+    pub_ = image_transport::create_publisher(
+        this,
+        "masked/image_raw");
+
+    RCLCPP_INFO(
+        get_logger(),
+        "Mask node initialized");
   }
 
-  void callback(const sensor_msgs::ImageConstPtr& msg) {
-    cv_bridge::CvImageConstPtr img_ptr;
-    try {
-      img_ptr = cv_bridge::toCvShare(msg);
-    } catch (const cv_bridge::Exception& e) {
-      ROS_ERROR_STREAM("cv_bridge exception: " << e.what());
+private:
+  void callback(
+      const sensor_msgs::msg::Image::ConstSharedPtr& msg)
+  {
+    if (!msg)
+    {
+      RCLCPP_ERROR(
+          get_logger(),
+          "Received a null image");
       return;
     }
 
-    if (!result_image_) {
-      result_image_.reset(new cv_bridge::CvImage());
-      result_image_->encoding = img_ptr->encoding;
-      result_image_->image =
-          cv::Mat(img_ptr->image.rows, img_ptr->image.cols, img_ptr->image.type());
+    cv_bridge::CvImageConstPtr image_ptr;
+
+    try
+    {
+      image_ptr = cv_bridge::toCvShare(msg);
+    }
+    catch (const cv_bridge::Exception& exception)
+    {
+      RCLCPP_ERROR(
+          get_logger(),
+          "cv_bridge exception: %s",
+          exception.what());
+      return;
     }
 
-    result_image_->image.setTo(0);
-    result_image_->header = img_ptr->header;
-    cv::bitwise_or(img_ptr->image, img_ptr->image, result_image_->image, mask_);
+    if (mask_.rows != image_ptr->image.rows ||
+        mask_.cols != image_ptr->image.cols)
+    {
+      RCLCPP_ERROR(
+          get_logger(),
+          "Mask size %dx%d does not match image size %dx%d",
+          mask_.cols,
+          mask_.rows,
+          image_ptr->image.cols,
+          image_ptr->image.rows);
+      return;
+    }
 
-    pub_.publish(result_image_->toImageMsg());
+    if (!result_image_ ||
+        result_image_->image.rows != image_ptr->image.rows ||
+        result_image_->image.cols != image_ptr->image.cols ||
+        result_image_->image.type() != image_ptr->image.type())
+    {
+      result_image_ =
+          std::make_shared<cv_bridge::CvImage>();
+
+      result_image_->encoding =
+          image_ptr->encoding;
+
+      result_image_->image =
+          cv::Mat(
+              image_ptr->image.rows,
+              image_ptr->image.cols,
+              image_ptr->image.type());
+    }
+
+    result_image_->header =
+        image_ptr->header;
+
+    result_image_->image.setTo(0);
+
+    cv::bitwise_and(
+        image_ptr->image,
+        image_ptr->image,
+        result_image_->image,
+        mask_);
+
+    pub_.publish(
+        result_image_->toImageMsg());
   }
 
-  std::unique_ptr<image_transport::ImageTransport> transport_;
   image_transport::Subscriber sub_;
   image_transport::Publisher pub_;
 
@@ -129,4 +232,5 @@ struct MaskNodelet : public nodelet::Nodelet {
 
 }  // namespace semantic_inference
 
-PLUGINLIB_EXPORT_CLASS(semantic_inference::MaskNodelet, nodelet::Nodelet)
+RCLCPP_COMPONENTS_REGISTER_NODE(
+    semantic_inference::MaskNode)

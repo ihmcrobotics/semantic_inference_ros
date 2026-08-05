@@ -27,6 +27,9 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
+# Copyright (c) 2026, IHMC Robotics Lab.
+# All rights reserved.
+
 """Torch module preparing batch of images for CLIP."""
 
 from semantic_inference_python.config import Config

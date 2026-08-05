@@ -1,23 +1,33 @@
 cmake_minimum_required(VERSION 3.16)
 project(semantic_inference_msgs)
 
-find_package(catkin REQUIRED message_generation sensor_msgs std_msgs)
+find_package(ament_cmake REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
 
-add_message_files(
-  FILES FeatureVector.msg FeatureVectors.msg FeatureVectorStamped.msg
-        FeatureVectorsStamped.msg FeatureImage.msg
-        LevelFeatureVectorStamped.msg NavigationPromptsEmbeddings.msg
-        ObjectsPromptPair.msg VlmForNavigationDebug.msg
-        VlmForNavigationOutput.msg
-        VlmForNavigationRelationshipOutput.msg
+find_package(sensor_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
+
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/FeatureVector.msg"
+  "msg/FeatureVectors.msg"
+  "msg/FeatureVectorStamped.msg"
+  "msg/FeatureVectorsStamped.msg"
+  "msg/FeatureImage.msg"
+  "msg/LevelFeatureVectorStamped.msg"
+  "msg/NavigationPromptsEmbeddings.msg"
+  "msg/ObjectsPromptPair.msg"
+  "msg/VlmForNavigationDebug.msg"
+  "msg/VlmForNavigationOutput.msg"
+  "msg/VlmForNavigationRelationshipOutput.msg"
+
+  "srv/EncodeFeature.srv"
+  "srv/NavigationPrompt.srv"
+
+  DEPENDENCIES
+    sensor_msgs
+    std_msgs
 )
-add_service_files(FILES EncodeFeature.srv NavigationPrompt.srv)
 
-generate_messages(DEPENDENCIES sensor_msgs std_msgs)
+ament_export_dependencies(rosidl_default_runtime)
 
-catkin_package(
-  CATKIN_DEPENDS message_runtime sensor_msgs std_msgs
-  DEPENDS
-  INCLUDE_DIRS
-  LIBRARIES
-)
+ament_package()

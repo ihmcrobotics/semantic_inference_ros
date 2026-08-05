@@ -7,42 +7,128 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_compile_options(-Wall -Wextra)
 
-find_package(catkin REQUIRED roscpp nodelet cv_bridge image_transport)
+find_package(ament_cmake REQUIRED)
+find_package(ament_cmake_python REQUIRED)
+
+find_package(rclcpp REQUIRED)
+find_package(rclcpp_components REQUIRED)
+
+find_package(cv_bridge REQUIRED)
+find_package(image_transport REQUIRED)
+find_package(message_filters REQUIRED)
+
+find_package(sensor_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
+
+find_package(config_utilities REQUIRED)
 find_package(semantic_inference REQUIRED)
-find_package(dynamic_reconfigure REQUIRED)
+find_package(semantic_inference_msgs REQUIRED)
 
-catkin_python_setup()
-
-generate_dynamic_reconfigure_options(
-  cfg/VLMForNavigation.cfg
-)
-
-catkin_package(
-  CATKIN_DEPENDS cv_bridge image_transport nodelet roscpp semantic_inference_msgs
-  DEPENDS semantic_inference
-  INCLUDE_DIRS include
-  LIBRARIES ${PROJECT_NAME}
+ament_python_install_package(
+  ${PROJECT_NAME}
+  PACKAGE_DIR src/${PROJECT_NAME}
 )
 
 add_library(
-  ${PROJECT_NAME}
-  src/mask_nodelet.cpp src/rgbd_segmentation_nodelet.cpp src/segmentation_nodelet.cpp
-  src/output_publisher.cpp src/recolor_nodelet.cpp src/republish_nodelet.cpp
+  ${PROJECT_NAME} SHARED
+  src/mask_nodelet.cpp
+  src/rgbd_segmentation_nodelet.cpp
+  src/segmentation_nodelet.cpp
+  src/output_publisher.cpp
+  src/recolor_nodelet.cpp
+  src/republish_nodelet.cpp
 )
-target_include_directories(${PROJECT_NAME} PUBLIC include ${catkin_INCLUDE_DIRS})
+
+target_include_directories(
+  ${PROJECT_NAME}
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+
+ament_target_dependencies(
+  ${PROJECT_NAME}
+  rclcpp
+  rclcpp_components
+  cv_bridge
+  image_transport
+  message_filters
+  sensor_msgs
+  std_msgs
+  config_utilities
+  semantic_inference_msgs
+)
+
 target_link_libraries(
-  ${PROJECT_NAME} ${catkin_LIBRARIES} semantic_inference::semantic_inference
+  ${PROJECT_NAME}
+  semantic_inference::semantic_inference
+)
+
+rclcpp_components_register_nodes(
+  ${PROJECT_NAME}
+  "semantic_inference::MaskNode"
+  "semantic_inference::SegmentationNode"
+  "semantic_inference::RgbdSegmentationNode"
+  "semantic_inference::RecolorNode"
+  "semantic_inference::RepublishNode"
 )
 
 install(
   TARGETS ${PROJECT_NAME}
-  ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
-  LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
-  RUNTIME DESTINATION ${CATKIN_GLOBAL_BIN_DESTINATION}
+  EXPORT export_${PROJECT_NAME}
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin
+  INCLUDES DESTINATION include
 )
 
-install(DIRECTORY include/${PROJECT_NAME}/
-        DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
+install(
+  DIRECTORY include/
+  DESTINATION include
 )
 
-install(DIRECTORY launch/ DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch)
+install(
+  DIRECTORY launch/
+  DESTINATION share/${PROJECT_NAME}/launch
+)
+
+install(
+  DIRECTORY config/
+  DESTINATION share/${PROJECT_NAME}/config
+)
+
+install(
+  PROGRAMS
+    app/openset_segmentation_node
+    app/clip_features_node
+    app/clip_publisher_node
+    app/language_embedding_node
+    app/encode_vlm_labels_node
+    app/vlm_features_node
+    app/dummy_vlm_node
+    app/navigation_prompt_service
+    app/vlm_for_navigation_node
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+ament_export_targets(
+  export_${PROJECT_NAME}
+  HAS_LIBRARY_TARGET
+)
+
+ament_export_include_directories(include)
+
+ament_export_dependencies(
+  rclcpp
+  rclcpp_components
+  cv_bridge
+  image_transport
+  message_filters
+  sensor_msgs
+  std_msgs
+  config_utilities
+  semantic_inference
+  semantic_inference_msgs
+)
+
+ament_package()

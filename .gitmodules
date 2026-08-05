@@ -1,3 +1,4 @@
 [submodule "semantic_inference_python/src/semantic_inference_python/models/deepseek"]
 	path = semantic_inference_python/src/semantic_inference_python/models/deepseek
-	url = git@github.com:ntnu-arl/DeepSeek-VL2.git
+	url = https://github.com/ihmcrobotics/DeepSeek-VL2.git
+	branch = main

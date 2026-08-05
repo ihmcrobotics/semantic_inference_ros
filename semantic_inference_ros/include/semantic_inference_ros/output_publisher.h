@@ -30,29 +30,39 @@
  * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
  * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- * * -------------------------------------------------------------------------- */
+ * -------------------------------------------------------------------------- */
 
-// Copyright (c) 2025, Autonomous Robots Lab, Norwegian University of Science and
-// Technology All rights reserved.
-
+// Copyright (c) 2026, IHMC Robotics Lab.
+// All rights reserved.
+//
 // This source code is licensed under the BSD-style license found in the
-// LICENSE file in the root directory of this source tree
+// LICENSE file in the root directory of this source tree.
+
 
 #pragma once
-#include <cv_bridge/cv_bridge.h>
-#include <image_transport/image_transport.h>
-#include <ros/ros.h>
+
+#include <cv_bridge/cv_bridge.hpp>
+#include <image_transport/image_transport.hpp>
+#include <rclcpp/rclcpp.hpp>
+#include <std_msgs/msg/header.hpp>
+
 #include <semantic_inference/image_recolor.h>
-#include <semantic_inference_msgs/FeatureImage.h>
-#include <semantic_inference_msgs/FeatureVectorStamped.h>
+#include <semantic_inference_msgs/msg/feature_image.hpp>
+#include <semantic_inference_msgs/msg/feature_vector_stamped.hpp>
 
 #include <opencv2/imgproc.hpp>
 
-namespace semantic_inference {
+#include <memory>
+#include <optional>
 
-class OutputPublisher {
- public:
-  struct Config {
+namespace semantic_inference
+{
+
+class OutputPublisher
+{
+public:
+  struct Config
+  {
     ImageRecolor::Config recolor;
     bool publish_labels = true;
     bool publish_color = true;
@@ -60,28 +70,36 @@ class OutputPublisher {
     bool publish_panoptic = true;
     double overlay_alpha = 0.4;
     bool open_vocab = false;
-  } const config;
+  };
 
-  OutputPublisher(const Config& config,
-                  image_transport::ImageTransport& transport,
-                  ros::NodeHandle& nh);
+  OutputPublisher(
+      const Config& config,
+      rclcpp::Node& node);
 
-  void publish(const std_msgs::Header& header,
-               const cv::Mat& labels,
-               const cv::Mat& color,
-               const std::optional<cv::Mat>& panoptic = std::nullopt);
+  void publish(
+      const std_msgs::msg::Header& header,
+      const cv::Mat& labels,
+      const cv::Mat& color,
+      const std::optional<cv::Mat>& panoptic = std::nullopt);
 
- private:
+private:
   void resizePanoptic(const cv::Mat& panoptic) const;
 
+  Config config_;
   ImageRecolor image_recolor_;
 
   image_transport::Publisher label_pub_;
   image_transport::Publisher color_pub_;
   image_transport::Publisher panoptic_pub_;
   image_transport::Publisher overlay_pub_;
-  ros::Publisher image_feature_pub_;
-  ros::Publisher semantics_with_features_pub_;
+
+  rclcpp::Publisher<
+      semantic_inference_msgs::msg::FeatureVectorStamped>::SharedPtr
+      image_feature_pub_;
+
+  rclcpp::Publisher<
+      semantic_inference_msgs::msg::FeatureImage>::SharedPtr
+      semantics_with_features_pub_;
 
   cv_bridge::CvImagePtr label_image_;
   cv_bridge::CvImagePtr color_image_;

@@ -1,68 +1,594 @@
 #!/usr/bin/env python3
-"""Add the contents of one bag to another."""
-import rosbag
-import click
+"""Copy selected messages from one ROS 2 bag into another ROS 2 bag."""
+
+from __future__ import annotations
+
 import pathlib
+import shutil
+import tempfile
+from dataclasses import dataclass
+from typing import Dict, Iterator, Optional, Sequence, Tuple
+
+import click
+import rosbag2_py
 import tqdm
+import yaml
+
+
+@dataclass
+class SerializedBagMessage:
+    """A serialized ROS 2 bag message."""
+
+    topic: str
+    data: bytes
+    timestamp: int
+
+
+def _split_topic(topic_specification: str) -> Tuple[str, str]:
+    """Split FROM_TOPIC[:TO_TOPIC]."""
+    if ":" not in topic_specification:
+        return topic_specification, topic_specification
+
+    source_topic, destination_topic = topic_specification.split(
+        ":",
+        maxsplit=1,
+    )
+
+    if not source_topic or not destination_topic:
+        raise click.BadParameter(
+            f"Invalid topic remapping '{topic_specification}'. "
+            "Expected FROM_TOPIC[:TO_TOPIC]."
+        )
+
+    return source_topic, destination_topic
+
+
+def _detect_storage_id(
+    bag_path: pathlib.Path,
+) -> str:
+    """Read the rosbag2 storage identifier from metadata.yaml."""
+    metadata_path = bag_path / "metadata.yaml"
+
+    if not metadata_path.is_file():
+        raise click.ClickException(
+            f"ROS 2 bag metadata was not found at '{metadata_path}'."
+        )
+
+    with metadata_path.open("r", encoding="utf-8") as metadata_file:
+        metadata = yaml.safe_load(metadata_file)
+
+    try:
+        return str(
+            metadata[
+                "rosbag2_bagfile_information"
+            ]["storage_identifier"]
+        )
+    except (KeyError, TypeError) as exception:
+        raise click.ClickException(
+            f"Could not determine the storage type from "
+            f"'{metadata_path}'."
+        ) from exception
+
+
+def _open_reader(
+    bag_path: pathlib.Path,
+    storage_id: str,
+) -> rosbag2_py.SequentialReader:
+    """Open a ROS 2 sequential bag reader."""
+    reader = rosbag2_py.SequentialReader()
+
+    storage_options = rosbag2_py.StorageOptions(
+        uri=str(bag_path),
+        storage_id=storage_id,
+    )
+
+    converter_options = rosbag2_py.ConverterOptions(
+        input_serialization_format="cdr",
+        output_serialization_format="cdr",
+    )
+
+    reader.open(
+        storage_options,
+        converter_options,
+    )
+
+    return reader
+
+
+def _open_writer(
+    bag_path: pathlib.Path,
+    storage_id: str,
+) -> rosbag2_py.SequentialWriter:
+    """Open a ROS 2 sequential bag writer."""
+    writer = rosbag2_py.SequentialWriter()
+
+    storage_options = rosbag2_py.StorageOptions(
+        uri=str(bag_path),
+        storage_id=storage_id,
+    )
+
+    converter_options = rosbag2_py.ConverterOptions(
+        input_serialization_format="cdr",
+        output_serialization_format="cdr",
+    )
+
+    writer.open(
+        storage_options,
+        converter_options,
+    )
+
+    return writer
+
+
+def _topic_metadata_with_name(
+    original_metadata,
+    topic_name: str,
+):
+    """Copy topic metadata while replacing its topic name."""
+    kwargs = {
+        "name": topic_name,
+        "type": original_metadata.type,
+        "serialization_format": (
+            original_metadata.serialization_format
+        ),
+    }
+
+    # Jazzy supports QoS profiles and a type-description hash in topic
+    # metadata. Preserve them when exposed by the Python binding.
+    if hasattr(original_metadata, "offered_qos_profiles"):
+        kwargs["offered_qos_profiles"] = (
+            original_metadata.offered_qos_profiles
+        )
+
+    if hasattr(original_metadata, "type_description_hash"):
+        kwargs["type_description_hash"] = (
+            original_metadata.type_description_hash
+        )
+
+    try:
+        return rosbag2_py.TopicMetadata(**kwargs)
+    except TypeError:
+        # Compatibility fallback for bindings exposing only the older
+        # TopicMetadata constructor.
+        return rosbag2_py.TopicMetadata(
+            name=topic_name,
+            type=original_metadata.type,
+            serialization_format=(
+                original_metadata.serialization_format
+            ),
+            offered_qos_profiles="",
+        )
+
+
+def _topic_metadata_map(
+    reader: rosbag2_py.SequentialReader,
+) -> Dict[str, object]:
+    """Return topic metadata indexed by topic name."""
+    return {
+        metadata.name: metadata
+        for metadata in reader.get_all_topics_and_types()
+    }
+
+
+def _message_iterator(
+    reader: rosbag2_py.SequentialReader,
+    selected_topics: Optional[set[str]] = None,
+    topic_remapping: Optional[Dict[str, str]] = None,
+) -> Iterator[SerializedBagMessage]:
+    """Yield serialized messages from a bag."""
+    while reader.has_next():
+        topic, data, timestamp = reader.read_next()
+
+        if (
+            selected_topics is not None
+            and topic not in selected_topics
+        ):
+            continue
+
+        output_topic = (
+            topic_remapping.get(topic, topic)
+            if topic_remapping is not None
+            else topic
+        )
+
+        yield SerializedBagMessage(
+            topic=output_topic,
+            data=data,
+            timestamp=timestamp,
+        )
+
+
+def _next_or_none(
+    iterator: Iterator[SerializedBagMessage],
+) -> Optional[SerializedBagMessage]:
+    """Return the next item or None when exhausted."""
+    try:
+        return next(iterator)
+    except StopIteration:
+        return None
+
+
+def _count_messages(
+    bag_path: pathlib.Path,
+    storage_id: str,
+    selected_topics: Optional[set[str]] = None,
+) -> int:
+    """Count bag messages, optionally filtering by topic."""
+    reader = _open_reader(
+        bag_path,
+        storage_id,
+    )
+
+    count = 0
+
+    while reader.has_next():
+        topic, _data, _timestamp = reader.read_next()
+
+        if (
+            selected_topics is None
+            or topic in selected_topics
+        ):
+            count += 1
+
+    return count
+
+
+def _register_topics(
+    writer: rosbag2_py.SequentialWriter,
+    destination_metadata: Dict[str, object],
+    source_metadata: Dict[str, object],
+    topic_map: Dict[str, str],
+) -> None:
+    """Register destination and remapped source topics."""
+    registered_types: Dict[str, str] = {}
+
+    def register(metadata, output_name: str) -> None:
+        output_type = metadata.type
+        existing_type = registered_types.get(output_name)
+
+        if existing_type is not None:
+            if existing_type != output_type:
+                raise click.ClickException(
+                    f"Topic '{output_name}' has conflicting types: "
+                    f"'{existing_type}' and '{output_type}'."
+                )
+            return
+
+        writer.create_topic(
+            _topic_metadata_with_name(
+                metadata,
+                output_name,
+            )
+        )
+
+        registered_types[output_name] = output_type
+
+    for metadata in destination_metadata.values():
+        register(metadata, metadata.name)
+
+    for source_name, destination_name in topic_map.items():
+        metadata = source_metadata.get(source_name)
+
+        if metadata is None:
+            raise click.ClickException(
+                f"Source topic '{source_name}' does not exist "
+                "in FROM_BAG."
+            )
+
+        register(metadata, destination_name)
+
+
+def _merge_messages(
+    writer: rosbag2_py.SequentialWriter,
+    destination_iterator: Iterator[SerializedBagMessage],
+    source_iterator: Iterator[SerializedBagMessage],
+    total_messages: int,
+) -> None:
+    """Merge two timestamp-ordered bag streams."""
+    destination_message = _next_or_none(
+        destination_iterator
+    )
+    source_message = _next_or_none(
+        source_iterator
+    )
+
+    with tqdm.tqdm(
+        total=total_messages,
+        desc="Merging messages",
+    ) as progress:
+        while (
+            destination_message is not None
+            or source_message is not None
+        ):
+            use_destination = (
+                source_message is None
+                or (
+                    destination_message is not None
+                    and destination_message.timestamp
+                    <= source_message.timestamp
+                )
+            )
+
+            if use_destination:
+                message = destination_message
+                destination_message = _next_or_none(
+                    destination_iterator
+                )
+            else:
+                message = source_message
+                source_message = _next_or_none(
+                    source_iterator
+                )
+
+            if message is None:
+                continue
+
+            writer.write(
+                message.topic,
+                message.data,
+                message.timestamp,
+            )
+
+            progress.update(1)
+
+
+def _replace_destination_bag(
+    generated_bag: pathlib.Path,
+    destination_bag: pathlib.Path,
+) -> None:
+    """Replace the destination bag while retaining rollback safety."""
+    backup_path = destination_bag.with_name(
+        f"{destination_bag.name}.backup"
+    )
+
+    if backup_path.exists():
+        shutil.rmtree(backup_path)
+
+    destination_bag.rename(backup_path)
+
+    try:
+        shutil.move(
+            str(generated_bag),
+            str(destination_bag),
+        )
+    except Exception:
+        if destination_bag.exists():
+            shutil.rmtree(destination_bag)
+
+        backup_path.rename(destination_bag)
+        raise
+
+    shutil.rmtree(backup_path)
 
 
 @click.command()
-@click.argument("from-bag", type=click.Path(exists=True))
-@click.argument("to-bag", type=click.Path(exists=True))
-@click.argument("topics", nargs=-1, type=str)
+@click.argument(
+    "from_bag",
+    type=click.Path(
+        exists=True,
+        file_okay=False,
+        path_type=pathlib.Path,
+    ),
+)
+@click.argument(
+    "to_bag",
+    type=click.Path(
+        exists=True,
+        file_okay=False,
+        path_type=pathlib.Path,
+    ),
+)
+@click.argument(
+    "topics",
+    nargs=-1,
+    type=str,
+)
 @click.option(
     "-d",
     "--dry-run",
     is_flag=True,
     default=False,
-    help="show information without running",
+    help="Show the planned operation without modifying the bag.",
 )
-def main(from_bag, to_bag, topics, dry_run):
+@click.option(
+    "--output-storage-id",
+    default=None,
+    help=(
+        "Storage plugin for the merged bag. By default, use the "
+        "storage plugin of TO_BAG."
+    ),
+)
+def main(
+    from_bag: pathlib.Path,
+    to_bag: pathlib.Path,
+    topics: Sequence[str],
+    dry_run: bool,
+    output_storage_id: Optional[str],
+) -> None:
     """
-    Copy messages from FROM_BAG to TO_BAG.
+    Copy messages from FROM_BAG into TO_BAG.
 
-    \b
-    FROM_BAG: Path to bag to copy from
-    TO_BAG: Path to bag to copy to
-    TOPICS: Topics to copy from FROM_BAG to TO_BAG. Defaults to all topics
+    TOPICS may include an optional remapping:
 
-    Note that topics can be specified with an optional remapping (from_name[:to_name])
+        FROM_TOPIC[:TO_TOPIC]
+
+    When no TOPICS are supplied, all source topics are copied.
     """
-    from_bag = str(pathlib.Path(from_bag).expanduser().absolute())
-    to_bag = str(pathlib.Path(to_bag).expanduser().absolute())
-    name_pairs = [
-        (x, x) if ":" not in x else (x.split(":")[0], x.split(":")[1]) for x in topics
-    ]
-    topic_map = {x[0]: x[1] for x in name_pairs}
+    from_bag = from_bag.expanduser().resolve()
+    to_bag = to_bag.expanduser().resolve()
 
-    click.secho(f"FROM_BAG: {from_bag}", fg="green")
-    click.secho(f"TO_BAG: {to_bag}", fg="green")
-    if len(topics) == 0:
-        click.secho("Copying all message", fg="green")
+    if from_bag == to_bag:
+        raise click.ClickException(
+            "FROM_BAG and TO_BAG must be different bags."
+        )
+
+    from_storage_id = _detect_storage_id(from_bag)
+    to_storage_id = _detect_storage_id(to_bag)
+
+    if output_storage_id is None:
+        output_storage_id = to_storage_id
+
+    from_reader = _open_reader(
+        from_bag,
+        from_storage_id,
+    )
+    to_reader = _open_reader(
+        to_bag,
+        to_storage_id,
+    )
+
+    source_metadata = _topic_metadata_map(from_reader)
+    destination_metadata = _topic_metadata_map(to_reader)
+
+    if topics:
+        topic_pairs = [
+            _split_topic(topic)
+            for topic in topics
+        ]
     else:
-        click.secho("Copying the following topics:", fg="green")
-        for topic, name in topic_map.items():
-            if topic == name:
-                click.secho(f" - {topic} (no change)", fg="green")
-            else:
-                click.secho(f" - {topic} →  {name}", fg="green")
+        topic_pairs = [
+            (topic_name, topic_name)
+            for topic_name in source_metadata
+        ]
+
+    topic_map = dict(topic_pairs)
+
+    if len(topic_map) != len(topic_pairs):
+        raise click.ClickException(
+            "A source topic was specified more than once."
+        )
+
+    missing_topics = [
+        topic
+        for topic in topic_map
+        if topic not in source_metadata
+    ]
+
+    if missing_topics:
+        raise click.ClickException(
+            "The following topics do not exist in FROM_BAG: "
+            + ", ".join(missing_topics)
+        )
+
+    click.secho(
+        f"FROM_BAG: {from_bag}",
+        fg="green",
+    )
+    click.secho(
+        f"TO_BAG:   {to_bag}",
+        fg="green",
+    )
+    click.secho(
+        f"Input storage:  {from_storage_id}",
+        fg="green",
+    )
+    click.secho(
+        f"Target storage: {to_storage_id}",
+        fg="green",
+    )
+    click.secho(
+        f"Output storage: {output_storage_id}",
+        fg="green",
+    )
+
+    click.secho(
+        "Copying the following topics:",
+        fg="green",
+    )
+
+    for source_topic, destination_topic in topic_map.items():
+        if source_topic == destination_topic:
+            click.secho(
+                f"  - {source_topic} (no remapping)",
+                fg="green",
+            )
+        else:
+            click.secho(
+                f"  - {source_topic} → {destination_topic}",
+                fg="green",
+            )
 
     if dry_run:
         return
 
-    click.echo("Opening bags...")
+    source_topics = set(topic_map)
 
-    with rosbag.Bag(from_bag, "r") as in_bag, rosbag.Bag(to_bag, "a") as out_bag:
-        click.echo("Starting copy")
+    destination_message_count = _count_messages(
+        to_bag,
+        to_storage_id,
+    )
+    source_message_count = _count_messages(
+        from_bag,
+        from_storage_id,
+        source_topics,
+    )
 
-        topic_filter = None if len(topics) == 0 else [x for x in topic_map]
-        bag_iter = in_bag.read_messages(topics=topic_filter)
-        num_messsages = in_bag.get_message_count(topic_filters=topic_filter)
-        progress = tqdm.tqdm(bag_iter, total=num_messsages, desc="Copying messages")
+    # Reopen readers after counting because SequentialReader has reached
+    # the end of each bag.
+    from_reader = _open_reader(
+        from_bag,
+        from_storage_id,
+    )
+    to_reader = _open_reader(
+        to_bag,
+        to_storage_id,
+    )
 
-        for topic, msg, t in progress:
-            new_topic = topic_map.get(topic, topic)
-            out_bag.write(new_topic, msg, t)
+    temporary_parent = pathlib.Path(
+        tempfile.mkdtemp(prefix="rosbag_merge_")
+    )
+    generated_bag = temporary_parent / "merged_bag"
+
+    try:
+        writer = _open_writer(
+            generated_bag,
+            output_storage_id,
+        )
+
+        _register_topics(
+            writer=writer,
+            destination_metadata=destination_metadata,
+            source_metadata=source_metadata,
+            topic_map=topic_map,
+        )
+
+        destination_iterator = _message_iterator(
+            to_reader
+        )
+        source_iterator = _message_iterator(
+            from_reader,
+            selected_topics=source_topics,
+            topic_remapping=topic_map,
+        )
+
+        _merge_messages(
+            writer=writer,
+            destination_iterator=destination_iterator,
+            source_iterator=source_iterator,
+            total_messages=(
+                destination_message_count
+                + source_message_count
+            ),
+        )
+
+        # Release the writer before moving the generated bag.
+        del writer
+
+        _replace_destination_bag(
+            generated_bag,
+            to_bag,
+        )
+    finally:
+        if temporary_parent.exists():
+            shutil.rmtree(
+                temporary_parent,
+                ignore_errors=True,
+            )
+
+    click.secho(
+        f"Finished merging messages into '{to_bag}'.",
+        fg="green",
+    )
 
 
 if __name__ == "__main__":

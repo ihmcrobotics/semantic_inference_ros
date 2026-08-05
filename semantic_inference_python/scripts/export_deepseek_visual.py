@@ -1,5 +1,5 @@
-# Copyright (c) 2025, Autonomous Robots Lab, Norwegian University of Science and
-# Technology All rights reserved.
+# Copyright (c) 2026, IHMC Robotics Lab.
+# All rights reserved.
 
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree
@@ -20,7 +20,7 @@ from semantic_inference_python.models.deepseek.deepseek_vl2.models import (
     MlpProjectorConfig,
 )
 
-base_path = Path("/home/arl/jetson_ssd/cache/deepseek-vl2-vision")
+base_path = Path("/home/ihmc/jetson_ssd/cache/deepseek-vl2-vision")
 with (base_path / "config.json").open() as f:
     models_config = json.load(f)
 vision_config = VisionEncoderConfig(**models_config["vision_config"])

@@ -1,2 +1,3 @@
-Header header
+std_msgs/Header header
 semantic_inference_msgs/VlmForNavigationRelationshipOutput[] output
+

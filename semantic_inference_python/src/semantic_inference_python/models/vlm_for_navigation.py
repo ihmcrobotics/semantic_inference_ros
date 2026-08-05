@@ -1,5 +1,5 @@
-# Copyright (c) 2025, Autonomous Robots Lab, Norwegian University of Science and
-# Technology All rights reserved.
+# Copyright (c) 2026, IHMC Robotics Lab.
+# All rights reserved.
 
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree
@@ -11,7 +11,7 @@ from pathlib import Path
 import copy
 
 import torch
-import rospy
+from rclpy.logging import get_logger
 from tqdm import tqdm
 
 from semantic_inference_python.config import Config, config_field
@@ -21,6 +21,9 @@ from semantic_inference_python.client import (
     OpenAIClientConfig,
     OpenAIClient,
 )
+
+
+LOGGER = get_logger("vlm_for_navigation")
 
 
 @dataclass(frozen=True)
@@ -107,7 +110,7 @@ class VLMForNavigation:
                     system_prompt=self.llm_response_parser_prompt,
                 )
             else:
-                rospy.logerr(
+                LOGGER.error(
                     "[VLM for navigation] LLM response parser prompt file not found."
                 )
                 self.llm_response_parser_prompt = None
@@ -180,7 +183,7 @@ class VLMForNavigation:
                 )
                 generated_output = self.client.get_result(job_id)
             except:
-                rospy.logerr("[vlm_for_navigation] Server error")
+                LOGGER.error("[vlm_for_navigation] Server error")
                 return [], [], [], [], [], []
         else:
             generated_output = self.vlm.generate_caption(
@@ -242,7 +245,7 @@ class VLMForNavigation:
                     llm_prompt, log=self.config.verbose
                 )
                 if not success:
-                    rospy.logerr(
+                    LOGGER.error(
                         "[VLM for navigation] Error parsing LLM response: {}".format(
                             output
                         )
@@ -278,7 +281,7 @@ class VLMForNavigation:
             if len(inputs.object_inputs[0].prompts) > 0:
                 base_prompt = ""
         else:
-            rospy.logerr("[VLM for navigation] No prompts provided.")
+            LOGGER.error("[VLM for navigation] No prompts provided.")
             return output
 
         for object_input in tqdm(inputs.object_inputs):
@@ -302,7 +305,7 @@ class VLMForNavigation:
             output.all_explanations.extend(all_explanations)
             if self._publish_current:
                 self.publish_current = False
-                rospy.logwarn(
+                LOGGER.warning(
                     f"Stopping inference early after processing {len(output.selected_object_ids)}/{len(inputs.object_inputs)} objects."
                 )
                 return output
@@ -315,7 +318,7 @@ class VLMForNavigation:
         if len(object_input.prompts) > 0:
             base_prompt = ""
         else:
-            rospy.logerr("[VLM for navigation] No prompts provided.")
+            LOGGER.error("[VLM for navigation] No prompts provided.")
             return output
         (
             selected_ids,

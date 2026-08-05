@@ -1,13 +1,30 @@
 <?xml version="1.0"?>
-<package format="2">
-    <name>semantic_inference_python</name>
-    <version>0.0.0</version>
-    <description>Package for semantic_inference_python</description>
-    <author email="albert.g.puigjaner@ntnu.no">Albert Gassol Puigjaner</author>
-    <maintainer email="albert.g.puigjaner@ntnu.no">Albert Gassol Puigjaner</maintainer>
-    <license>BSD</license>
+<package format="3">
+  <name>semantic_inference_python</name>
+  <version>0.0.1</version>
 
-    <buildtool_depend>catkin</buildtool_depend>
-    <buildtool_depend>catkin_simple</buildtool_depend>
-    <exec_depend>rospy</exec_depend>
+  <description>
+    ROS 2 Python package for semantic inference
+  </description>
+
+  <author email="achatterjee@ihmc.org">
+    Arghya Chatterjee
+  </author>
+
+  <maintainer email="achatterjee@ihmc.org">
+    Arghya Chatterjee
+  </maintainer>
+
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>semantic_inference_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
 </package>

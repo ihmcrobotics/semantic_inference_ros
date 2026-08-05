@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # BSD 3-Clause License
 #
 # Copyright (c) 2021-2024, Massachusetts Institute of Technology.
@@ -27,101 +29,252 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
-"""Module containing queue-based image processor."""
+# Copyright (c) 2026, IHMC Robotics Lab.
+# All rights reserved.
+#
+"""ROS 2 queue-based image processing worker."""
 
-from semantic_inference_python import Config
-from semantic_inference_ros.ros_conversions import Conversions
-from dataclasses import dataclass
+from __future__ import annotations
 
-import sensor_msgs.msg
-
-import rospy
 import queue
 import threading
 import time
+from dataclasses import dataclass
+from typing import Any, Callable, Optional
+
+from rclpy.node import Node
+from rclpy.qos import QoSProfile, qos_profile_sensor_data
+from sensor_msgs.msg import Image
+from std_msgs.msg import Header
+
+from semantic_inference_python import Config
+from semantic_inference_ros.ros_conversions import Conversions
+
+
+ImageCallback = Callable[[Header, Any], None]
 
 
 @dataclass
 class ImageWorkerConfig(Config):
-    """Configuration for image worker."""
+    """Configuration for the image worker."""
 
     queue_size: int = 1
     min_separation_s: float = 0.0
 
     @classmethod
     def load(cls, filepath):
-        """Load config from file."""
+        """Load configuration from a file."""
         return Config.load(cls, filepath)
+
+    def validate(self) -> None:
+        """Validate configuration values."""
+        if self.queue_size <= 0:
+            raise ValueError(
+                f"queue_size must be greater than zero, got {self.queue_size}."
+            )
+
+        if self.min_separation_s < 0.0:
+            raise ValueError(
+                "min_separation_s must be non-negative, got "
+                f"{self.min_separation_s}."
+            )
 
 
 class ImageWorker:
-    """Class to simplify message processing."""
+    """Subscribe to images and process them on a background thread."""
 
-    def __init__(self, config, topic, callback, **kwargs):
-        """Register worker with ros."""
+    def __init__(
+        self,
+        node: Node,
+        config: ImageWorkerConfig,
+        topic: str,
+        callback: ImageCallback,
+        *,
+        qos_profile: QoSProfile = qos_profile_sensor_data,
+    ) -> None:
+        """
+        Initialize the worker.
+
+        Args:
+            node: ROS 2 node that owns the subscription.
+            config: Worker configuration.
+            topic: Image topic to subscribe to.
+            callback: Function called as ``callback(header, image_array)``.
+            qos_profile: QoS profile used for the image subscription.
+        """
+        if not isinstance(node, Node):
+            raise TypeError(
+                f"node must be an rclpy.node.Node, got {type(node).__name__}."
+            )
+
+        config.validate()
+
+        self._node = node
         self._config = config
         self._callback = callback
 
         self._started = False
-        self._should_shutdown = False
-        self._last_stamp = None
+        self._should_shutdown = threading.Event()
+        self._last_stamp_ns: Optional[int] = None
+        self._thread: Optional[threading.Thread] = None
 
-        self._queue = queue.Queue(maxsize=config.queue_size)
-
-        rospy.on_shutdown(self.stop)
-
-        self._sub = rospy.Subscriber(
-            topic, sensor_msgs.msg.Image, self.add_message, queue_size=1, **kwargs
+        self._queue: queue.Queue[Image] = queue.Queue(
+            maxsize=config.queue_size
         )
+
+        self._sub = self._node.create_subscription(
+            Image,
+            topic,
+            self.add_message,
+            qos_profile,
+        )
+
+        self._node.context.on_shutdown(
+            self.stop
+        )
+
         self.start()
 
-    def add_message(self, msg):
-        """Add new message to queue."""
-        if not self._queue.full():
-            self._queue.put(msg, block=False, timeout=False)
+    @staticmethod
+    def _stamp_to_nanoseconds(stamp) -> int:
+        """Convert a builtin_interfaces/Time message to nanoseconds."""
+        return (
+            int(stamp.sec) * 1_000_000_000
+            + int(stamp.nanosec)
+        )
 
-    def start(self):
-        """Start worker processing queue."""
-        if not self._started:
-            self._started = True
-            self._thread = threading.Thread(target=self._do_work)
-            self._thread.start()
+    def add_message(
+        self,
+        msg: Image,
+    ) -> None:
+        """
+        Add a message to the processing queue.
 
-    def stop(self):
-        """Stop worker from processing queue."""
+        When the queue is full, the oldest queued image is removed so that
+        processing continues with the most recent sensor data.
+        """
+        if self._should_shutdown.is_set():
+            return
+
+        try:
+            self._queue.put_nowait(msg)
+            return
+        except queue.Full:
+            pass
+
+        try:
+            self._queue.get_nowait()
+            self._queue.task_done()
+        except queue.Empty:
+            pass
+
+        try:
+            self._queue.put_nowait(msg)
+        except queue.Full:
+            self._node.get_logger().warning(
+                "Image worker queue remained full; dropping incoming image."
+            )
+
+    def start(self) -> None:
+        """Start the background worker thread."""
         if self._started:
-            self._should_shutdown = True
-            self._thread.join()
+            return
 
-        self._started = False
-        self._should_shutdown = False
+        self._should_shutdown.clear()
 
-    def spin(self):
-        """Wait for ros to shutdown or worker to exit."""
+        self._thread = threading.Thread(
+            target=self._do_work,
+            name="semantic-inference-image-worker",
+            daemon=True,
+        )
+        self._thread.start()
+        self._started = True
+
+    def stop(self) -> None:
+        """Stop the background worker thread."""
         if not self._started:
             return
 
-        while self._thread.is_alive() and not self._should_shutdown:
+        self._should_shutdown.set()
+
+        if (
+            self._thread is not None
+            and self._thread.is_alive()
+            and threading.current_thread() is not self._thread
+        ):
+            self._thread.join(timeout=2.0)
+
+            if self._thread.is_alive():
+                self._node.get_logger().warning(
+                    "Image worker thread did not stop within two seconds."
+                )
+
+        self._thread = None
+        self._started = False
+
+    def spin(self) -> None:
+        """
+        Wait until the worker exits.
+
+        The ROS 2 node itself should normally be spun with ``rclpy.spin(node)``.
+        This method is retained for compatibility with older callers.
+        """
+        if not self._started:
+            return
+
+        while (
+            self._thread is not None
+            and self._thread.is_alive()
+            and not self._should_shutdown.is_set()
+            and self._node.context.ok()
+        ):
             time.sleep(1.0e-2)
 
-        self.stop()
-
-    def _do_work(self):
-        while not self._should_shutdown:
+    def _do_work(self) -> None:
+        """Process queued image messages."""
+        while (
+            not self._should_shutdown.is_set()
+            and self._node.context.ok()
+        ):
             try:
-                msg = self._queue.get(timeout=0.1)
+                msg = self._queue.get(
+                    timeout=0.1
+                )
             except queue.Empty:
                 continue
 
-            if self._last_stamp is not None:
-                diff_s = (msg.header.stamp - self._last_stamp).to_sec()
-                if diff_s < self._config.min_separation_s:
-                    continue
+            try:
+                current_stamp_ns = self._stamp_to_nanoseconds(
+                    msg.header.stamp
+                )
 
-            self._last_stamp = msg.header.stamp
+                if self._last_stamp_ns is not None:
+                    separation_s = (
+                        current_stamp_ns
+                        - self._last_stamp_ns
+                    ) / 1.0e9
 
-            # try:
-            img = Conversions.to_image(msg)
-            self._callback(msg.header, img)
-            # except Exception as e:
-            # rospy.logerr(f"spin failed: {e}")
+                    if (
+                        separation_s
+                        < self._config.min_separation_s
+                    ):
+                        continue
+
+                self._last_stamp_ns = current_stamp_ns
+
+                image = Conversions.to_image(
+                    msg
+                )
+
+                self._callback(
+                    msg.header,
+                    image,
+                )
+
+            except Exception as exception:
+                self._node.get_logger().error(
+                    "Image worker failed while processing an image: "
+                    f"{exception}"
+                )
+            finally:
+                self._queue.task_done()

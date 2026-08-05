@@ -27,126 +27,232 @@
  * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
  * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- * * -------------------------------------------------------------------------- */
+ * -------------------------------------------------------------------------- */
+
+// Copyright (c) 2025, IHMC Robotics Lab.
+// All rights reserved.
+//
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree.
 
 #include <config_utilities/config_utilities.h>
-#include <config_utilities/parsing/ros.h>
-#include <cv_bridge/cv_bridge.h>
-#include <image_transport/image_transport.h>
-#include <nodelet/nodelet.h>
-#include <pluginlib/class_list_macros.h>
+#include <config_utilities/parsing/context.h>
+
+#include <cv_bridge/cv_bridge.hpp>
+#include <image_transport/image_transport.hpp>
+
+#include <rclcpp/rclcpp.hpp>
+#include <rclcpp_components/register_node_macro.hpp>
+#include <rmw/qos_profiles.h>
+
 #include <semantic_inference/image_rotator.h>
 #include <semantic_inference/model_config.h>
 #include <semantic_inference/segmenter.h>
 
-#include <atomic>
-#include <mutex>
+#include <sensor_msgs/msg/image.hpp>
+
+#include <functional>
+#include <memory>
 #include <opencv2/core.hpp>
-#include <optional>
-#include <thread>
+#include <stdexcept>
 
 #include "semantic_inference_ros/output_publisher.h"
 #include "semantic_inference_ros/ros_log_sink.h"
 #include "semantic_inference_ros/worker.h"
 
-namespace semantic_inference {
+namespace semantic_inference
+{
 
-class SegmentationNodelet : public nodelet::Nodelet {
- public:
-  using ImageWorker = Worker<sensor_msgs::ImageConstPtr>;
+class SegmentationNode : public rclcpp::Node
+{
+public:
+  using ImageMessage = sensor_msgs::msg::Image;
+  using ImageMessagePtr = ImageMessage::ConstSharedPtr;
+  using ImageWorker = Worker<ImageMessagePtr>;
 
-  struct Config {
+  struct Config
+  {
     Segmenter::Config segmenter;
     OutputPublisher::Config output;
     WorkerConfig worker;
     ImageRotator::Config image_rotator;
   };
 
-  virtual void onInit() override;
+  explicit SegmentationNode(const rclcpp::NodeOptions& options);
 
-  virtual ~SegmentationNodelet();
+  ~SegmentationNode() override;
 
- private:
-  void runSegmentation(const sensor_msgs::ImageConstPtr& msg);
+private:
+  void runSegmentation(const ImageMessagePtr& msg);
 
   Config config_;
+
   std::unique_ptr<Segmenter> segmenter_;
   ImageRotator image_rotator_;
   std::unique_ptr<ImageWorker> worker_;
 
-  std::unique_ptr<image_transport::ImageTransport> transport_;
   std::unique_ptr<OutputPublisher> output_pub_;
   image_transport::Subscriber sub_;
 };
 
-void declare_config(SegmentationNodelet::Config& config) {
+void declare_config(SegmentationNode::Config& config)
+{
   using namespace config;
-  name("SegmentationNodelet::Config");
+
+  name("SegmentationNode::Config");
   field(config.segmenter, "segmenter");
   field(config.output, "output");
   field(config.worker, "worker");
   field(config.image_rotator, "image_rotator");
 }
 
-void SegmentationNodelet::onInit() {
-  ros::NodeHandle nh = getPrivateNodeHandle();
-  logging::Logger::addSink("ros", std::make_shared<RosLogSink>());
+SegmentationNode::SegmentationNode(
+    const rclcpp::NodeOptions& options)
+    : rclcpp::Node("segmentation", options)
+{
+  logging::Logger::addSink(
+    "ros",
+    std::make_shared<RosLogSink>(get_logger()));
 
-  config_ = config::fromRos<SegmentationNodelet::Config>(nh);
+  config_ = config::fromContext<Config>();
+
   SLOG(INFO) << "\n" << config::toString(config_);
   config::checkValid(config_);
 
-  try {
-    segmenter_ = std::make_unique<Segmenter>(config_.segmenter);
-  } catch (const std::exception& e) {
-    SLOG(ERROR) << "Exception: " << e.what();
-    throw e;
+  try
+  {
+    segmenter_ =
+        std::make_unique<Segmenter>(
+            config_.segmenter);
+  }
+  catch (const std::exception& exception)
+  {
+    SLOG(ERROR)
+        << "Exception while creating segmenter: "
+        << exception.what();
+
+    throw;
   }
 
-  image_rotator_ = ImageRotator(config_.image_rotator);
+  image_rotator_ =
+      ImageRotator(config_.image_rotator);
 
-  transport_ = std::make_unique<image_transport::ImageTransport>(nh);
-  output_pub_ = std::make_unique<OutputPublisher>(config_.output, *transport_, nh);
+  output_pub_ =
+      std::make_unique<OutputPublisher>(
+          config_.output,
+          *this);
+
   worker_ = std::make_unique<ImageWorker>(
       config_.worker,
-      [this](const auto& msg) { runSegmentation(msg); },
-      [](const auto& msg) { return msg->header.stamp; });
+      [this](const auto& msg)
+      {
+        runSegmentation(msg);
+      },
+      [](const auto& msg)
+      {
+        return rclcpp::Time(msg->header.stamp);
+      });
 
-  sub_ = transport_->subscribe(
-      "color/image_raw", 1, &ImageWorker::addMessage, worker_.get());
+  sub_ = image_transport::create_subscription(
+      this,
+      "color/image_raw",
+      [this](const ImageMessagePtr& msg)
+      {
+        if (!msg)
+        {
+          RCLCPP_ERROR(
+              get_logger(),
+              "Received a null color image");
+          return;
+        }
+
+        worker_->addMessage(msg);
+      },
+      "raw",
+      rmw_qos_profile_sensor_data);
+
+  RCLCPP_INFO(
+      get_logger(),
+      "Segmentation node initialized");
 }
 
-SegmentationNodelet::~SegmentationNodelet() {
-  if (worker_) {
+SegmentationNode::~SegmentationNode()
+{
+  if (worker_)
+  {
     worker_->stop();
   }
 }
 
-void SegmentationNodelet::runSegmentation(const sensor_msgs::ImageConstPtr& msg) {
-  cv_bridge::CvImageConstPtr img_ptr;
-  try {
-    img_ptr = cv_bridge::toCvShare(msg, "rgb8");
-  } catch (const cv_bridge::Exception& e) {
-    SLOG(ERROR) << "cv_bridge exception: " << e.what();
+void SegmentationNode::runSegmentation(
+    const ImageMessagePtr& msg)
+{
+  if (!msg)
+  {
+    RCLCPP_ERROR(
+        get_logger(),
+        "Cannot run segmentation on a null image");
     return;
   }
 
-  SLOG(DEBUG) << "Encoding: " << img_ptr->encoding << " size: " << img_ptr->image.cols
-              << " x " << img_ptr->image.rows << " x " << img_ptr->image.channels()
-              << " is right type? "
-              << (img_ptr->image.type() == CV_8UC3 ? "yes" : "no");
+  cv_bridge::CvImageConstPtr image_ptr;
 
-  const auto rotated = image_rotator_.rotate(img_ptr->image);
-  const auto result = segmenter_->infer(rotated);
-  if (!result) {
-    SLOG(ERROR) << "failed to run inference!";
+  try
+  {
+    image_ptr =
+        cv_bridge::toCvShare(
+            msg,
+            "rgb8");
+  }
+  catch (const cv_bridge::Exception& exception)
+  {
+    SLOG(ERROR)
+        << "cv_bridge exception: "
+        << exception.what();
     return;
   }
 
-  const auto derotated = image_rotator_.rotate(result.labels);
-  output_pub_->publish(img_ptr->header, derotated, img_ptr->image, result.panoptic_ids);
+  SLOG(DEBUG)
+      << "Encoding: "
+      << image_ptr->encoding
+      << " size: "
+      << image_ptr->image.cols
+      << " x "
+      << image_ptr->image.rows
+      << " x "
+      << image_ptr->image.channels()
+      << " is right type? "
+      << (
+          image_ptr->image.type() == CV_8UC3
+              ? "yes"
+              : "no");
+
+  const auto rotated =
+      image_rotator_.rotate(
+          image_ptr->image);
+
+  const auto result =
+      segmenter_->infer(rotated);
+
+  if (!result)
+  {
+    SLOG(ERROR)
+        << "Failed to run semantic inference";
+    return;
+  }
+
+  const auto derotated_labels =
+      image_rotator_.rotate(
+          result.labels);
+
+  output_pub_->publish(
+      image_ptr->header,
+      derotated_labels,
+      image_ptr->image,
+      result.panoptic_ids);
 }
 
 }  // namespace semantic_inference
 
-PLUGINLIB_EXPORT_CLASS(semantic_inference::SegmentationNodelet, nodelet::Nodelet)
+RCLCPP_COMPONENTS_REGISTER_NODE(
+    semantic_inference::SegmentationNode)

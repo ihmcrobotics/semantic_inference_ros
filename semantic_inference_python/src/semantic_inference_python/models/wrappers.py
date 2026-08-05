@@ -32,8 +32,8 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 # --------------------------------------------------------------------------
 
-# Copyright (c) 2025, Autonomous Robots Lab, Norwegian University of Science and
-# Technology All rights reserved.
+# Copyright (c) 2026, IHMC Robotics Lab.
+# All rights reserved.
 
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree
@@ -47,7 +47,7 @@ import clip
 import open_clip
 import os
 import time
-import rospy
+from rclpy.logging import get_logger
 from pathlib import Path
 import cv2
 import einops
@@ -90,7 +90,9 @@ except ImportError:
 # import pycuda.autoinit
 
 
-DUMMY_IMG_PATH = Path("/home/arl/jetson_ssd/hydra_bags/image.png")
+LOGGER = get_logger("semantic_inference_wrappers")
+
+DUMMY_IMG_PATH = Path.home() / "hydra_bags" / "image.png"
 
 
 def panoptic_image(masks: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
@@ -1095,7 +1097,7 @@ class YOLOESegmentation(nn.Module):
             verbose=self.config.verbose,
         )
         if self.config.verbose:
-            rospy.loginfo(
+            LOGGER.info(
                 f"YOLOE inference time: {(time.time() - start_time) * 1000:.3f} ms"
             )
 
@@ -1121,7 +1123,7 @@ class YOLOESegmentation(nn.Module):
         )
         masks_tensor = masks_tensor.to(device)
         if self.config.verbose:
-            rospy.loginfo(
+            LOGGER.info(
                 f"Scale image time: {(time.time() - start_time) * 1000:.3f} ms"
             )
 
@@ -1637,7 +1639,7 @@ class ClipWrapper(nn.Module):
         if not isinstance(self.model, TRTInferenceCLIPVision):
             # Correctly create a Parameter on the desired device
             self.model.to(device)
-            self._transform = self._transform.to(device)
+            # self._transform = self._transform.to(device)
         else:
             self.model_torch.to(device)
 

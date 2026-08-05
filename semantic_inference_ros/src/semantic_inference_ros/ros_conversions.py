@@ -27,7 +27,10 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
-"""Module containing ROS message conversions."""
+# Copyright (c) 2026, IHMC Robotics Lab.
+# All rights reserved.
+#
+"""Module containing ROS 2 message conversions."""
 
 import cv_bridge
 import numpy as np
@@ -53,7 +56,7 @@ class Conversions:
         raw_data = msg.data[depth_header_size:]
 
         depth_img = cv2.imdecode(
-            np.fromstring(raw_data, np.uint8), cv2.IMREAD_UNCHANGED
+            np.frombuffer(raw_data, dtype=np.uint8), cv2.IMREAD_UNCHANGED
         )
         if depth_img is None:
             # probably wrong header size

@@ -1,21 +1,42 @@
-"""Prompt parser methods for open-vocab and reasoning-enhanced navigation."""
+#!/usr/bin/env python3
 
-from dataclasses import dataclass, field
-from typing import Dict, List
+# Copyright (c) 2026, IHMC Robotics Lab.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+"""Prompt parser methods for open-vocabulary and reasoning-enhanced navigation."""
+
+from __future__ import annotations
 
 import json
-import yaml
-import numpy as np
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Dict, List
 
-from semantic_inference_python.config import Config, config_field, register_config
+import numpy as np
+import yaml
+from rclpy.logging import get_logger
+
+from semantic_inference_python.client import (
+    OpenAIClient,
+    OpenAIClientConfig,
+)
+from semantic_inference_python.config import (
+    Config,
+    config_field,
+    register_config,
+)
 from semantic_inference_python.models import default_device
-from semantic_inference_python.client import OpenAIClient, OpenAIClientConfig
+
+
+LOGGER = get_logger("navigation_prompt_service")
 
 
 @dataclass
 class ObjectsPromptPair:
-    """Data structure for object and prompt pair."""
+    """Object, subject, and visual-reasoning prompt."""
 
     object: str = ""
     subject: str = ""
@@ -24,65 +45,111 @@ class ObjectsPromptPair:
 
 @dataclass
 class NavigationPrompterOutput:
-    """Output data structure for navigation prompter."""
+    """Output produced by a navigation prompter."""
 
     objects: List[str] = field(default_factory=list)
     objects_embeddings: List[np.ndarray] = field(default_factory=list)
-    room_embedding: np.ndarray = field(default_factory=lambda: np.array([]))
+    room_embedding: np.ndarray = field(
+        default_factory=lambda: np.array([], dtype=np.float32)
+    )
     prompt: str = ""
     room: str = ""
-    objects_prompt_pairs: List[ObjectsPromptPair] = field(default_factory=list)
+    objects_prompt_pairs: List[ObjectsPromptPair] = field(
+        default_factory=list
+    )
     success: bool = False
     error: str = ""
 
 
 class HardCodedPrompter:
-    """Hard-coded navigation prompter for demonstration purposes."""
+    """Hard-coded navigation prompter for demonstrations."""
 
-    def __init__(self, config) -> None:
-        """Construct a navigation prompt service node."""
+    def __init__(self, config: "HardCodedPrompterConfig") -> None:
+        """Initialize the hard-coded navigation prompter."""
         self.config = config
+
         self.clip_model = self.config.clip_model.create().to(
             default_device(self.config.use_cuda)
         )
+        self.clip_model.eval()
 
     @classmethod
-    def construct(cls, **kwargs):
-        """Construct a HardCodedPrompter instance."""
+    def construct(cls, **kwargs) -> "HardCodedPrompter":
+        """Construct a hard-coded prompter from configuration arguments."""
         config = HardCodedPrompterConfig()
         config.update(kwargs)
         return cls(config)
 
-    def generate(self, prompt: str, room: str) -> NavigationPrompterOutput:
-        prompt_key = next((k for k in self.config.prompt_objects if k in prompt), None)
-        output = NavigationPrompterOutput()
-        if not prompt_key:
+    def generate(
+        self,
+        prompt: str,
+        room: str,
+    ) -> NavigationPrompterOutput:
+        """Generate navigation information from a known prompt template."""
+        output = NavigationPrompterOutput(
+            prompt=prompt
+        )
+
+        prompt_lower = prompt.lower()
+
+        prompt_key = next(
+            (
+                key
+                for key in self.config.prompt_objects
+                if key.lower() in prompt_lower
+            ),
+            None,
+        )
+
+        if prompt_key is None:
             output.error = "Unsupported prompt"
             return output
 
-        prompt_config = self.config.prompt_objects[prompt_key]
+        prompt_config = self.config.prompt_objects[
+            prompt_key
+        ]
 
-        # Handle room ID
         if prompt_config["required_room"]:
             if not room.isdigit():
                 output.error = "Room must be an integer"
                 return output
+
             output.room = f"R({room})"
+        else:
+            output.room = room
 
-        # Generate object embeddings
-        for obj_name in prompt_config["objects"]:
-            output.objects.append(obj_name)
-            output.objects_embeddings.append(
-                self.clip_model.embed_text(obj_name).cpu().numpy()
+        object_names = list(
+            prompt_config["objects"]
+        )
+        output.objects.extend(object_names)
+
+        if object_names:
+            embeddings = (
+                self.clip_model
+                .embed_text(object_names)
+                .detach()
+                .cpu()
+                .numpy()
             )
 
-        # Generate room embedding if applicable
-        if prompt_config["room_desc"]:
+            output.objects_embeddings = [
+                embeddings[index]
+                for index in range(len(object_names))
+            ]
+
+        room_description = prompt_config.get(
+            "room_desc"
+        )
+
+        if room_description:
             output.room_embedding = (
-                self.clip_model.embed_text(prompt_config["room_desc"]).cpu().numpy()
+                self.clip_model
+                .embed_text([room_description])
+                .detach()
+                .cpu()
+                .numpy()[0]
             )
 
-        output.prompt = prompt
         output.success = True
         return output
 
@@ -96,139 +163,394 @@ class HardCodedPrompter:
 class HardCodedPrompterConfig(Config):
     """Configuration for the hard-coded navigation prompter."""
 
-    clip_model: str = config_field("clip", default="open_clip")
+    clip_model: Any = config_field(
+        "clip",
+        default="open_clip",
+    )
     use_cuda: bool = True
-    prompt_objects = {
-        "clean": {
-            "required_room": True,
-            "objects": ["chair"],
-            "room_desc": None,
-        },
-        "prepare": {
-            "required_room": False,
-            "objects": ["monitor"],
-            "room_desc": "a place with monitors or computers",
-        },
-    }
+
+    prompt_objects: Dict[str, Dict[str, Any]] = field(
+        default_factory=lambda: {
+            "clean": {
+                "required_room": True,
+                "objects": ["chair"],
+                "room_desc": None,
+            },
+            "prepare": {
+                "required_room": False,
+                "objects": ["monitor"],
+                "room_desc": (
+                    "a place with monitors or computers"
+                ),
+            },
+        }
+    )
 
 
 class OpenAIPrompter:
-    def __init__(self, config) -> None:
-        """Construct a navigation prompter using OpenAI."""
+    """Generate navigation prompts using an OpenAI-backed parser."""
+
+    def __init__(
+        self,
+        config: "OpenAIPrompterConfig",
+    ) -> None:
+        """Initialize the OpenAI navigation prompter."""
         self.config = config
+
         self.clip_model = self.config.clip_model.create().to(
             default_device(self.config.use_cuda)
         )
-        self.system_prompt = None
-        if Path(self.config.system_prompts_path).exists():
-            with open(self.config.system_prompts_path, "r") as f:
-                self.system_prompt = f.read().strip()
-        if Path(self.config.labels_path).exists():
-            with open(self.config.labels_path, "r") as f:
-                data = yaml.safe_load(f)
-                object_labels = data.get("object_labels", [])
-                labels = ", ".join(
-                    label["name"]
-                    for label in data["label_names"]
-                    if label["label"] in object_labels
-                )
-                self.labels = labels.split(", ")
-            self.system_prompt += f"\n[{labels}]\n"
-        if Path(self.config.examples_path).exists():
-            with open(self.config.examples_path, "r") as f:
-                examples = f.read().strip()
-            self.system_prompt += f"\n{examples}\n"
-        self.client = OpenAIClient(
-            config=self.config.client_config, system_prompt=self.system_prompt
-        )
-        print(f"System prompt: {self.system_prompt}")
+        self.clip_model.eval()
 
-    def construct(self, **kwargs):
-        """Construct an OpenAIPrompter instance."""
+        self.system_prompt = ""
+        self.labels: List[str] = []
+
+        self._load_system_prompt()
+        self._load_labels()
+        self._load_examples()
+
+        self.client = OpenAIClient(
+            config=self.config.client_config,
+            system_prompt=self.system_prompt,
+        )
+
+        LOGGER.info(
+            "Initialized OpenAI navigation prompter."
+        )
+
+    @classmethod
+    def construct(
+        cls,
+        **kwargs,
+    ) -> "OpenAIPrompter":
+        """Construct an OpenAI prompter from configuration arguments."""
         config = OpenAIPrompterConfig()
         config.update(kwargs)
-        return OpenAIPrompter(config)
+        return cls(config)
+
+    def _load_system_prompt(self) -> None:
+        """Load the main system prompt."""
+        path = Path(
+            self.config.system_prompts_path
+        ).expanduser()
+
+        if not path.is_file():
+            if self.config.system_prompts_path:
+                LOGGER.warning(
+                    f"System prompt file does not exist: '{path}'"
+                )
+            return
+
+        self.system_prompt = path.read_text(
+            encoding="utf-8"
+        ).strip()
+
+    def _load_labels(self) -> None:
+        """Load allowed object labels."""
+        path = Path(
+            self.config.labels_path
+        ).expanduser()
+
+        if not path.is_file():
+            if self.config.labels_path:
+                LOGGER.warning(
+                    f"Labels file does not exist: '{path}'"
+                )
+            return
+
+        with path.open(
+            "r",
+            encoding="utf-8",
+        ) as labels_file:
+            data = yaml.safe_load(labels_file) or {}
+
+        object_label_ids = set(
+            data.get("object_labels", [])
+        )
+
+        label_names = data.get(
+            "label_names",
+            [],
+        )
+
+        self.labels = [
+            str(label["name"]).lower()
+            for label in label_names
+            if (
+                isinstance(label, dict)
+                and label.get("label") in object_label_ids
+                and "name" in label
+            )
+        ]
+
+        if self.labels:
+            formatted_labels = ", ".join(
+                self.labels
+            )
+            self.system_prompt += (
+                f"\n[{formatted_labels}]\n"
+            )
+
+    def _load_examples(self) -> None:
+        """Load prompt examples."""
+        path = Path(
+            self.config.examples_path
+        ).expanduser()
+
+        if not path.is_file():
+            if self.config.examples_path:
+                LOGGER.warning(
+                    f"Examples file does not exist: '{path}'"
+                )
+            return
+
+        examples = path.read_text(
+            encoding="utf-8"
+        ).strip()
+
+        if examples:
+            self.system_prompt += (
+                f"\n{examples}\n"
+            )
 
     @staticmethod
-    def _to_json(response: str) -> Dict:
-        """Convert a string response to a JSON dictionary."""
-        if response.startswith("```json"):
-            response = response[7:-3].strip()
-        elif response.startswith("```"):
-            response = response[3:-3].strip()
+    def _to_json(
+        response: str,
+    ) -> Dict[str, Any]:
+        """Convert a Markdown or plain JSON response to a dictionary."""
+        cleaned_response = response.strip()
 
-        return json.loads(response)
+        if cleaned_response.startswith(
+            "```json"
+        ):
+            cleaned_response = cleaned_response[
+                len("```json"):
+            ].strip()
+        elif cleaned_response.startswith("```"):
+            cleaned_response = cleaned_response[
+                len("```"):
+            ].strip()
 
-    def generate(self, prompt: str, room: str) -> NavigationPrompterOutput:
-        """Generate navigation prompts using OpenAI."""
-        output = NavigationPrompterOutput(prompt=prompt)
-        if not (room.isdigit() or room == "all" or room == "find"):
-            output.error = "Room must be an integer, 'all', or 'find'"
+        if cleaned_response.endswith("```"):
+            cleaned_response = cleaned_response[
+                :-3
+            ].strip()
+
+        parsed = json.loads(
+            cleaned_response
+        )
+
+        if not isinstance(parsed, dict):
+            raise ValueError(
+                "Navigation response must be a JSON object."
+            )
+
+        return parsed
+
+    def _is_known_label(
+        self,
+        object_name: str,
+    ) -> bool:
+        """Return whether an object is part of the configured label space."""
+        if not self.labels:
+            return True
+
+        return object_name.lower() in self.labels
+
+    @staticmethod
+    def _normalize_object_name(
+        object_name: str,
+    ) -> str:
+        """Normalize object names used by the navigation system."""
+        normalized = object_name.strip().lower()
+
+        if normalized == "table":
+            return "desk"
+
+        return normalized
+
+    def generate(
+        self,
+        prompt: str,
+        room: str,
+    ) -> NavigationPrompterOutput:
+        """Generate navigation prompts using the configured OpenAI client."""
+        output = NavigationPrompterOutput(
+            prompt=prompt
+        )
+
+        if not (
+            room.isdigit()
+            or room in {"all", "find"}
+        ):
+            output.error = (
+                "Room must be an integer, 'all', or 'find'"
+            )
             return output
-        if room.isdigit():
-            output.room = f"R({room})"
-        else:
-            output.room = room
+
+        output.room = (
+            f"R({room})"
+            if room.isdigit()
+            else room
+        )
+
         try:
-            prompt = f"Task: {prompt}"
-            response, success = self.client.generate_response(prompt)
+            response, success = (
+                self.client.generate_response(
+                    f"Task: {prompt}"
+                )
+            )
+
             if not success:
-                output.error = response
+                output.error = str(response)
                 return output
-        except Exception as e:
-            output.error = f"Error generating response: {e}"
+
+            response_data = self._to_json(
+                response
+            )
+
+        except Exception as exception:
+            output.error = (
+                "Error generating or parsing response: "
+                f"{exception}"
+            )
+            LOGGER.error(output.error)
             return output
 
-        response = self._to_json(response)
+        raw_objects = response_data.get(
+            "objects"
+        )
 
-        if "objects" not in response:
-            output.error = "Response does not contain 'objects' key"
+        if not isinstance(raw_objects, list):
+            output.error = (
+                "Response does not contain a valid 'objects' list"
+            )
             return output
-        # if 'interactions' not in response:
-        #     output.error = "Response does not contain 'interactions' key"
-        #     return output
 
-        output.objects = response["objects"]
-        embeddings = self.clip_model.embed_text(output.objects).cpu().numpy()
-        output.objects_embeddings = [embeddings[i] for i in range(len(output.objects))]
-        if "interactions" in response:
-            for _, pair in response["interactions"].items():
-                if (
-                    pair["objects"][0].lower() in pair["prompt"].lower()
-                    and pair["objects"][1].lower() in pair["prompt"].lower()
-                ):
-                    if pair["objects"][0].lower() == "table":
-                        pair["objects"][0] = "desk"
-                    if pair["objects"][1].lower() == "table":
-                        pair["objects"][1] = "desk"
-                    if (
-                        not pair["objects"][0].lower() in self.labels
-                        or not pair["objects"][1].lower() in self.labels
-                    ):
-                        continue
-                    object_prompt_pair = ObjectsPromptPair(
-                        object=pair["objects"][0],
-                        subject=pair["objects"][1],
-                        prompt=pair["prompt"],
-                    )
-                    output.objects_prompt_pairs.append(object_prompt_pair)
-                    if pair["objects"][0].lower() not in output.objects:
-                        output.objects.append(pair["objects"][0].lower())
-                    if pair["objects"][1].lower() not in output.objects:
-                        output.objects.append(pair["objects"][1].lower())
+        output.objects = []
+
+        for object_name in raw_objects:
+            normalized_name = (
+                self._normalize_object_name(
+                    str(object_name)
+                )
+            )
+
+            if (
+                normalized_name
+                and normalized_name not in output.objects
+            ):
+                output.objects.append(
+                    normalized_name
+                )
+
+        interactions = response_data.get(
+            "interactions",
+            {},
+        )
+
+        if isinstance(interactions, dict):
+            interaction_values = (
+                interactions.values()
+            )
+        elif isinstance(interactions, list):
+            interaction_values = interactions
+        else:
+            interaction_values = []
+
+        for pair in interaction_values:
+            if not isinstance(pair, dict):
+                continue
+
+            pair_objects = pair.get(
+                "objects",
+                [],
+            )
+            pair_prompt = str(
+                pair.get("prompt", "")
+            )
+
+            if (
+                not isinstance(pair_objects, list)
+                or len(pair_objects) < 2
+                or not pair_prompt
+            ):
+                continue
+
+            object_name = self._normalize_object_name(
+                str(pair_objects[0])
+            )
+            subject_name = self._normalize_object_name(
+                str(pair_objects[1])
+            )
+
+            prompt_lower = pair_prompt.lower()
+
+            if (
+                object_name not in prompt_lower
+                or subject_name not in prompt_lower
+            ):
+                continue
+
+            if (
+                not self._is_known_label(object_name)
+                or not self._is_known_label(subject_name)
+            ):
+                continue
+
+            output.objects_prompt_pairs.append(
+                ObjectsPromptPair(
+                    object=object_name,
+                    subject=subject_name,
+                    prompt=pair_prompt,
+                )
+            )
+
+            if object_name not in output.objects:
+                output.objects.append(
+                    object_name
+                )
+
+            if subject_name not in output.objects:
+                output.objects.append(
+                    subject_name
+                )
+
+        if output.objects:
+            embeddings = (
+                self.clip_model
+                .embed_text(output.objects)
+                .detach()
+                .cpu()
+                .numpy()
+            )
+
+            output.objects_embeddings = [
+                embeddings[index]
+                for index in range(len(output.objects))
+            ]
 
         output.success = True
         return output
 
 
-@register_config("navigation_prompter", name="openai", constructor=OpenAIPrompter)
+@register_config(
+    "navigation_prompter",
+    name="openai",
+    constructor=OpenAIPrompter,
+)
 @dataclass
 class OpenAIPrompterConfig(Config):
     """Configuration for the OpenAI navigation prompter."""
 
-    client_config: OpenAIClientConfig = field(default_factory=OpenAIClientConfig)
+    client_config: OpenAIClientConfig = field(
+        default_factory=OpenAIClientConfig
+    )
     system_prompts_path: str = ""
     examples_path: str = ""
     labels_path: str = ""
-    clip_model: str = config_field("clip", default="open_clip")
+    clip_model: Any = config_field(
+        "clip",
+        default="open_clip",
+    )
     use_cuda: bool = True

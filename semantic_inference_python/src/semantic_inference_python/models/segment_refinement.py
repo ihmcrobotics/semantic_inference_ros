@@ -3,23 +3,23 @@
 # license:
 # -----------------------------------------------------------------------------
 # BSD 3-Clause License
-
+#
 # Copyright (c) 2021-2024, Massachusetts Institute of Technology.
-
+#
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
-
+#
 # 1. Redistributions of source code must retain the above copyright notice, this
 #    list of conditions and the following disclaimer.
-
+#
 # 2. Redistributions in binary form must reproduce the above copyright notice,
 #    this list of conditions and the following disclaimer in the documentation
 #    and/or other materials provided with the distribution.
-
+#
 # 3. Neither the name of the copyright holder nor the names of its
 #    contributors may be used to endorse or promote products derived from
 #    this software without specific prior written permission.
-
+#
 # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
 # AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
 # IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -30,22 +30,24 @@
 # CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-# --------------------------------------------------------------------------
-
-# Copyright (c) 2025, Autonomous Robots Lab, Norwegian University of Science and
-# Technology All rights reserved.
-
+# -----------------------------------------------------------------------------
+#
+# Copyright (c) 2026, IHMC Robotics Lab.
+# All rights reserved.
+#
 # This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree
+# LICENSE file in the root directory of this source tree.
+
 """Torch module for refining SAM masks."""
 
-from semantic_inference_python.config import Config
 from dataclasses import dataclass
-from semantic_inference_python.models.wrappers import panoptic_image
 
 import torch
 import torchvision
 from torch import nn
+
+from semantic_inference_python.config import Config
+from semantic_inference_python.models.wrappers import panoptic_image
 
 
 @dataclass
@@ -65,12 +67,12 @@ class SegmentRefinement(nn.Module):
 
     def __init__(self, config):
         """Initialize the module with the provided config."""
-        super(SegmentRefinement, self).__init__()
+        super().__init__()
         self.config = config
 
     @classmethod
     def construct(cls, *args, **kwargs):
-        """See config."""
+        """Construct the module from configuration arguments."""
         config = SegmentRefinementConfig(*args, **kwargs)
         return cls(config)
 
@@ -78,17 +80,18 @@ class SegmentRefinement(nn.Module):
         """
         Refine computed masks.
 
-        Bounding boxes are assumed to each be [min_x, min_y, max_x, max_y]
+        Bounding boxes are assumed to each be [min_x, min_y, max_x, max_y].
 
         Args:
-            masks (torch.Tensor): bool tensor of N image masks of shape (N, R, C)
-            bboxes (torch.Tensor): int tensor of N bounding boxes of shape (N, 4)
-            labels (torch.Tensor): int tensor of N labels of shape (N,)
-            feature_image (torch.Tensor): feature image of shape (R, C, D)
-            confs (torch.Tensor): float tensor of N confidence scores of shape (N,)
+            masks (torch.Tensor): Boolean tensor of N masks with shape (N, R, C).
+            bboxes (torch.Tensor): Integer tensor of N boxes with shape (N, 4).
+            labels (torch.Tensor): Integer tensor of N labels with shape (N,).
+            feature_image (torch.Tensor): Feature image with shape (R, C, D).
+            confs (torch.Tensor): Confidence tensor with shape (N,).
 
         Returns:
-            masks, bboxes as tensors, labels as tensors, panoptic_image as tensor
+            Tuple containing refined masks, boxes, labels, feature image,
+            panoptic image, and confidence values.
         """
         masks = masks.to(torch.bool)
         device = masks.device
@@ -97,57 +100,111 @@ class SegmentRefinement(nn.Module):
         if num_masks == 0:
             return masks, bboxes, labels, feature_image, None, confs
 
-        # order masks
+        # Order masks by area, largest first.
         mask_sizes = torch.sum(masks, dim=(1, 2))
         sorted_idx = torch.argsort(mask_sizes, descending=True)
 
         dims = masks.size()
-        img = torch.zeros((dims[1], dims[2], 1), dtype=sorted_idx.dtype, device=device)
-        # think about broadcasting this somehow
-        for idx in sorted_idx:
-            img[masks[idx]] = idx + 1
+        image = torch.zeros(
+            (dims[1], dims[2], 1),
+            dtype=sorted_idx.dtype,
+            device=device,
+        )
 
-        m_new = torch.zeros_like(masks)
         for idx in sorted_idx:
-            nms_indices = (img == idx + 1)[:, :, 0]
-            m_new[idx, nms_indices] = 1
+            image[masks[idx]] = idx + 1
 
-        # filter out small border artifacts
+        refined_masks = torch.zeros_like(masks)
+        for idx in sorted_idx:
+            non_maximum_suppression_indices = (image == idx + 1)[:, :, 0]
+            refined_masks[idx, non_maximum_suppression_indices] = 1
+
+        # Filter out small border artifacts.
         if self.config.dilate_masks:
-            N = self.config.kernel_size
-            m_new = m_new[:, None, :, :].to(torch.float32)
-            W = torch.ones((1, 1, N, N), dtype=m_new.dtype, device=device)
+            kernel_size = self.config.kernel_size
+            refined_masks = refined_masks[:, None, :, :].to(torch.float32)
+            kernel = torch.ones(
+                (1, 1, kernel_size, kernel_size),
+                dtype=refined_masks.dtype,
+                device=device,
+            )
 
-            # erode mask
+            # Erode masks.
             for _ in range(self.config.dilation_passes):
-                m_new = nn.functional.conv2d(m_new, W, padding="same")
-                m_new[torch.abs(m_new - N**2) > self.config.kernel_tolerance] = 0
+                refined_masks = nn.functional.conv2d(
+                    refined_masks,
+                    kernel,
+                    padding="same",
+                )
+                refined_masks[
+                    torch.abs(refined_masks - kernel_size**2)
+                    > self.config.kernel_tolerance
+                ] = 0
 
-            # dilate mask
+            # Dilate masks.
             for _ in range(self.config.dilation_passes):
-                m_new = nn.functional.conv2d(m_new, W, padding="same")
+                refined_masks = nn.functional.conv2d(
+                    refined_masks,
+                    kernel,
+                    padding="same",
+                )
 
-            m_new = torch.squeeze(m_new, 1).to(torch.bool)
+            refined_masks = torch.squeeze(refined_masks, 1).to(torch.bool)
 
-        valid = torch.squeeze(torch.argwhere(torch.sum(m_new, dim=(1, 2))))
-        m_new = torch.index_select(m_new, 0, valid)
-        b_new = torchvision.ops.masks_to_boxes(m_new).to(torch.int32)
-        b_new[:, 2:] += 1
+        valid = torch.argwhere(
+            torch.sum(refined_masks, dim=(1, 2)) > 0
+        ).flatten()
 
-        # Filter labels corresponding to valid masks
-        l_new = None
+        if valid.numel() == 0:
+            empty_masks = refined_masks[:0]
+            empty_boxes = bboxes[:0]
+            empty_labels = labels[:0] if labels is not None else None
+            empty_confs = confs[:0] if confs is not None else None
+
+            return (
+                empty_masks,
+                empty_boxes,
+                empty_labels,
+                feature_image,
+                None,
+                empty_confs.cpu().numpy() if empty_confs is not None else None,
+            )
+
+        refined_masks = torch.index_select(refined_masks, 0, valid)
+        refined_boxes = torchvision.ops.masks_to_boxes(
+            refined_masks
+        ).to(torch.int32)
+        refined_boxes[:, 2:] += 1
+
+        refined_labels = None
         if labels is not None:
-            l_new = torch.index_select(labels, 0, valid)
+            refined_labels = torch.index_select(labels, 0, valid)
 
-        confs_new = torch.index_select(confs, 0, valid) if confs is not None else None
+        refined_confs = (
+            torch.index_select(confs, 0, valid)
+            if confs is not None
+            else None
+        )
+
+        panoptic_labels = (
+            refined_labels
+            if refined_labels is not None
+            else torch.arange(
+                refined_masks.shape[0],
+                device=refined_masks.device,
+            )
+            + 1
+        )
 
         return (
-            m_new,
-            b_new,
-            l_new,
+            refined_masks,
+            refined_boxes,
+            refined_labels,
             feature_image,
-            panoptic_image(
-                m_new, l_new if l_new is not None else torch.arange(m_new.shape[0]) + 1
+            panoptic_image(refined_masks, panoptic_labels),
+            (
+                refined_confs.cpu().numpy()
+                if refined_confs is not None
+                else None
             ),
-            confs_new.cpu().numpy() if confs_new is not None else None,
         )

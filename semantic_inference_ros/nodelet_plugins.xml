@@ -1,32 +1,42 @@
-<library path="lib/libsemantic_inference_ros">
-    <class name="semantic_inference/segmentation" type="semantic_inference::SegmentationNodelet"
-           base_class_type="nodelet::Nodelet">
-        <description>
-            nodelet to run semantic segmentation
-        </description>
-    </class>
-    <class name="semantic_inference/rgbd_segmentation" type="semantic_inference::RgbdSegmentationNodelet"
-           base_class_type="nodelet::Nodelet">
-        <description>
-            nodelet to run rgbd semantic segmentation
-        </description>
-    </class>
-    <class name="semantic_inference/recolor" type="semantic_inference::RecolorNodelet"
-           base_class_type="nodelet::Nodelet">
-        <description>
-            nodelet to recolor label image
-        </description>
-    </class>
-    <class name="semantic_inference/mask" type="semantic_inference::MaskNodelet"
-        base_class_type="nodelet::Nodelet">
-        <description>
-            nodelet to mask robot (or other static occlusion) from image
-        </description>
-    </class>
-    <class name="semantic_inference/republish" type="semantic_inference::RepublishNodelet"
-           base_class_type="nodelet::Nodelet">
-        <description>
-            nodelet to republish ground truth labels
-        </description>
-    </class>
-</library>
+<?xml version="1.0"?>
+<package format="3">
+  <name>semantic_inference_ros</name>
+  <version>0.0.1</version>
+
+  <description>
+    ROS 2 interface for semantic segmentation and reasoning
+  </description>
+
+  <author email="achatterjee@ihmc.org">
+    Arghya Chatterjee
+  </author>
+
+  <maintainer email="achatterjee@ihmc.org">
+    Arghya Chatterjee
+  </maintainer>
+
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>rclcpp_components</depend>
+
+  <depend>cv_bridge</depend>
+  <depend>image_transport</depend>
+
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+
+  <depend>semantic_inference</depend>
+  <depend>semantic_inference_python</depend>
+  <depend>semantic_inference_msgs</depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

@@ -1,5 +1,5 @@
-# Copyright (c) 2025, Autonomous Robots Lab, Norwegian University of Science and
-# Technology All rights reserved.
+# Copyright (c) 2026, IHMC Robotics Lab.
+# All rights reserved.
 
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree
@@ -12,11 +12,11 @@ import torch
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-MODEL_PATH = "/home/arl/jetson_ssd/cache/ultralytics/yoloe-11l-seg.pt"
-CUSTOM_MODEL = "/home/arl/jetson_ssd/cache/ultralytics/anymal_yoloe-11l-seg.pt"
-EXPORT_MODEL = "/home/arl/jetson_ssd/cache/ultralytics/anymal_yoloe-11l-seg.engine"
-CLASSES_PATH = "/home/arl/workspaces/hierarchical_reasoning_ws/src/reasoning/reasoning_hydra/config/label_spaces/anymal_label_space.yaml"
-IMAGE_PATH = "/home/arl/jetson_ssd/hydra_bags/image.png"
+MODEL_PATH = "/home/ihmc/jetson_ssd/cache/ultralytics/yoloe-11l-seg.pt"
+CUSTOM_MODEL = "/home/ihmc/jetson_ssd/cache/ultralytics/anymal_yoloe-11l-seg.pt"
+EXPORT_MODEL = "/home/ihmc/jetson_ssd/cache/ultralytics/anymal_yoloe-11l-seg.engine"
+CLASSES_PATH = "/home/ihmc/workspaces/hierarchical_reasoning_ws/src/reasoning/reasoning_hydra/config/label_spaces/anymal_label_space.yaml"
+IMAGE_PATH = "/home/ihmc/jetson_ssd/hydra_bags/image.png"
 
 with open(CLASSES_PATH) as f:
     labels_data = yaml.safe_load(f)["label_names"]

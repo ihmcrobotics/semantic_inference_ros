@@ -1,5 +1,5 @@
-# Copyright (c) 2025, Autonomous Robots Lab, Norwegian University of Science and
-# Technology All rights reserved.
+# Copyright (c) 2026, IHMC Robotics Lab.
+# All rights reserved.
 
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree
@@ -14,9 +14,9 @@ from pathlib import Path
 from torch import nn
 from typing import Optional
 
-MODEL_ONNX_SAVE_PATH = "/home/arl/jetson_ssd/cache/instructblip/onnx"
+MODEL_ONNX_SAVE_PATH = "/home/ihmc/jetson_ssd/cache/instructblip/onnx"
 Path(MODEL_ONNX_SAVE_PATH).mkdir(exist_ok=True, parents=True)
-IMAGE_PATH = "/home/arl/jetson_ssd/hydra_bags/image.png"
+IMAGE_PATH = "/home/ihmc/jetson_ssd/hydra_bags/image.png"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 

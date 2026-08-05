@@ -1,24 +1,62 @@
 <?xml version="1.0"?>
-<package format="2">
+<package format="3">
   <name>semantic_inference_ros</name>
   <version>0.0.1</version>
-  <description>ROS interface for semantic segmentation and reasoning</description>
+  <description>
+    ROS 2 interface for semantic segmentation, visual feature extraction,
+    and vision-language reasoning.
+  </description>
 
-  <author email="na26933@mit.edu">Nathan Hughes</author>
-  <author email="albert.g.puigjaner@ntnu.no">Albert Gassol Puigjaner</author>
-  <maintainer email="albert.g.puigjaner@ntnu.no">Albert Gassol Puigjaner</maintainer>
-  <license>BSD</license>
+  <author email="achatterjee@ihmc.org">
+    Arghya Chatterjee
+  </author>
 
-  <buildtool_depend>catkin</buildtool_depend>
+  <maintainer email="achatterjee@ihmc.org">
+    Arghya Chatterjee
+  </maintainer>
+
+  <license>BSD-3-Clause</license>
+
+  <!-- Build system -->
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
+
+  <!-- C++ build and runtime dependencies -->
+  <depend>config_utilities</depend>
   <depend>cv_bridge</depend>
   <depend>image_transport</depend>
-  <depend>nodelet</depend>
-  <depend>roscpp</depend>
+  <depend>message_filters</depend>
+  <depend>rclcpp</depend>
+  <depend>rclcpp_components</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+
+  <!-- Project dependencies -->
   <depend>semantic_inference</depend>
-  <depend>semantic_inference_python</depend>
   <depend>semantic_inference_msgs</depend>
 
+  <!-- Python node runtime dependencies -->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>rcl_interfaces</exec_depend>
+  <exec_depend>semantic_inference_python</exec_depend>
+
+  <!-- Services, messages, and transforms used by Python nodes -->
+  <exec_depend>hydra_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+
+  <!-- Launch support -->
+  <exec_depend>ros2launch</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <!-- System Python dependencies -->
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+  <exec_depend>python3-scipy</exec_depend>
+  <exec_depend>python3-tqdm</exec_depend>
+
   <export>
-      <nodelet plugin="${prefix}/nodelet_plugins.xml"/>
+    <build_type>ament_cmake</build_type>
   </export>
 </package>

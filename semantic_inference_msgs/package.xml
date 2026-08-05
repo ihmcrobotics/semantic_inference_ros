@@ -1,20 +1,34 @@
 <?xml version="1.0"?>
-<package format="2">
+<package format="3">
   <name>semantic_inference_msgs</name>
   <version>0.0.1</version>
-  <description>ROS message definitions for semantic_inference</description>
 
-  <author email="na26933@mit.edu">Nathan Hughes</author>
-  <author email="albert.g.puigjaner@ntnu.no">Albert Gassol Puigjaner</author>
-  <maintainer email="albert.g.puigjaner@ntnu.no">Albert Gassol Puigjaner</maintainer>
-  <license>BSD</license>
+  <description>
+    ROS 2 message and service definitions for semantic_inference
+  </description>
 
-  <buildtool_depend>catkin</buildtool_depend>
-  <build_depend>message_generation</build_depend>
-  <exec_depend>message_runtime</exec_depend>
+  <author email="achatterjee@ihmc.org">
+    Arghya Chatterjee
+  </author>
+
+  <maintainer email="achatterjee@ihmc.org">
+    Arghya Chatterjee
+  </maintainer>
+
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <build_depend>rosidl_default_generators</build_depend>
+
   <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
 
+  <exec_depend>rosidl_default_runtime</exec_depend>
+
+  <member_of_group>rosidl_interface_packages</member_of_group>
+
   <export>
+    <build_type>ament_cmake</build_type>
   </export>
 </package>

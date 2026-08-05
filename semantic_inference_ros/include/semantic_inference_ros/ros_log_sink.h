@@ -27,41 +27,86 @@
  * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
  * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- * * -------------------------------------------------------------------------- */
+ * -------------------------------------------------------------------------- */
+
+// Copyright (c) 2026, IHMC Robotics Lab.
+// All rights reserved.
+//
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree.
 
 #pragma once
 
-#include <ros/ros.h>
+#include <rclcpp/rclcpp.hpp>
 #include <semantic_inference/logging.h>
 
-namespace semantic_inference {
+#include <sstream>
+#include <utility>
 
-struct RosLogSink : logging::LogSink {
-  RosLogSink() = default;
-  virtual ~RosLogSink() = default;
+namespace semantic_inference
+{
 
-  void dispatch(const logging::LogEntry& entry) const override {
-    std::stringstream ss;
-    ss << entry.prefix() << entry.message();
-    switch (entry.level) {
+struct RosLogSink : logging::LogSink
+{
+  explicit RosLogSink(
+      rclcpp::Logger logger =
+          rclcpp::get_logger("semantic_inference"))
+      : logger_(std::move(logger))
+  {
+  }
+
+  ~RosLogSink() override = default;
+
+  void dispatch(
+      const logging::LogEntry& entry) const override
+  {
+    std::stringstream stream;
+    stream << entry.prefix() << entry.message();
+
+    const std::string message = stream.str();
+
+    switch (entry.level)
+    {
       case logging::Level::WARNING:
-        ROS_WARN_STREAM(ss.str());
+        RCLCPP_WARN(
+            logger_,
+            "%s",
+            message.c_str());
         break;
+
       case logging::Level::ERROR:
-        ROS_ERROR_STREAM(ss.str());
+        RCLCPP_ERROR(
+            logger_,
+            "%s",
+            message.c_str());
         break;
+
       case logging::Level::FATAL:
-        ROS_FATAL_STREAM(ss.str());
+        RCLCPP_FATAL(
+            logger_,
+            "%s",
+            message.c_str());
         break;
+
       case logging::Level::INFO:
-        ROS_INFO_STREAM(ss.str());
+        RCLCPP_INFO(
+            logger_,
+            "%s",
+            message.c_str());
         break;
-      default:
+
       case logging::Level::DEBUG:
-        ROS_DEBUG_STREAM(ss.str());
+      default:
+        RCLCPP_DEBUG(
+            logger_,
+            "%s",
+            message.c_str());
         break;
     }
   }
+
+private:
+  rclcpp::Logger logger_;
 };
 
 }  // namespace semantic_inference

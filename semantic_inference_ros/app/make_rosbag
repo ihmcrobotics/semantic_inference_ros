@@ -1,5 +1,21 @@
 #!/usr/bin/env python3
-"""Add openset image segmentation for all color images."""
+"""Add open-set image segmentation results to a ROS 2 bag."""
+
+from __future__ import annotations
+
+import pathlib
+import shutil
+import tempfile
+import time
+from typing import Dict, Iterable, List, Optional, Tuple
+
+import click
+import rosbag2_py
+import torch
+import tqdm
+
+from rclpy.serialization import deserialize_message, serialize_message
+from rosidl_runtime_py.utilities import get_message
 
 from semantic_inference_python import Config
 from semantic_inference_python.models import (
@@ -9,183 +25,605 @@ from semantic_inference_python.models import (
 )
 from semantic_inference_ros.ros_conversions import Conversions
 
-import rosbag
-import time
-import torch
-import click
-import pathlib
-import tqdm
-import tempfile
-import shutil
+
+TopicMap = Dict[str, str]
 
 
-def _split_topics(topic_str):
-    if ":" not in topic_str:
-        return topic_str, topic_str
+def _split_topics(topic_string: str) -> Tuple[str, str]:
+    """Split INPUT_TOPIC[:OUTPUT_TOPIC]."""
+    if ":" not in topic_string:
+        return topic_string, topic_string
 
-    parts = topic_str.split(":")
-    return parts[0], parts[1]
-
-
-def _get_type_map(bag):
-    info = bag.get_type_and_topic_info()[1]
-    topics = list(info.keys())
-    types = [x[0] for x in info.values()]
-    return {k: v for k, v in zip(topics, types)}
+    input_topic, output_topic = topic_string.split(":", maxsplit=1)
+    return input_topic, output_topic
 
 
-def _get_clip_topic(topic):
-    new_topic = pathlib.Path(topic)
-    return str(new_topic.parent / "clip_vector")
+def _get_clip_topic(topic: str) -> str:
+    """Return the CLIP-vector topic corresponding to a segmentation topic."""
+    topic_path = pathlib.PurePosixPath(topic)
+    return str(topic_path.parent / "clip_vector")
 
 
-def _show_topic_map(topic_map, include_clip_vector):
-    if len(topic_map) == 0:
+def _show_topic_map(
+    topic_map: TopicMap,
+    include_clip_vector: bool,
+) -> str:
+    """Format the input-to-output topic mapping."""
+    if not topic_map:
         return "{}"
 
-    contents = ""
-    for t_in, t_out in topic_map.items():
-        msg = f"  - {t_in} (in) →  "
-        offset = len(msg)
-        msg += f"{t_out} (out)"
+    lines: List[str] = []
+
+    for input_topic, output_topic in topic_map.items():
+        line = f"  - {input_topic} (in) → {output_topic} (out)"
+        lines.append(line)
+
         if include_clip_vector:
-            msg += "\n" + " " * offset + f"{_get_clip_topic(t_out)} (clip)"
+            lines.append(
+                f"    {_get_clip_topic(output_topic)} (CLIP embedding)"
+            )
 
-        contents += msg + "\n"
-
-    return contents[:-1]
+    return "\n".join(lines)
 
 
-def _write_bag(model, path_in, topic_map, samples, add_clip_vector):
-    with tempfile.NamedTemporaryFile(suffix=".bag", delete=False) as fout:
-        path_out = fout.name
-        click.secho(f"Writing to {path_out}", fg="green")
-        with rosbag.Bag(str(path_in), "r") as bag, rosbag.Bag(path_out, "w") as bag_out:
-            topic_type_map = _get_type_map(bag)
+def _open_reader(
+    bag_path: pathlib.Path,
+    storage_id: str,
+) -> rosbag2_py.SequentialReader:
+    """Open a ROS 2 bag reader."""
+    reader = rosbag2_py.SequentialReader()
 
-            topics = [x for x in topic_map]
-            N = bag.get_message_count(topic_filters=topics)
+    storage_options = rosbag2_py.StorageOptions(
+        uri=str(bag_path),
+        storage_id=storage_id,
+    )
+    converter_options = rosbag2_py.ConverterOptions(
+        input_serialization_format="cdr",
+        output_serialization_format="cdr",
+    )
 
-            for topic, msg, t in tqdm.tqdm(bag.read_messages(topics=topics), total=N):
-                img = Conversions.to_image(msg, msg_type=topic_type_map.get(topic))
+    reader.open(storage_options, converter_options)
+    return reader
 
-                tic = time.perf_counter_ns()
-                with torch.no_grad():
-                    ret = model.segment(img, is_rgb_order=False).cpu()
 
-                toc = time.perf_counter_ns()
-                sample_ns = toc - tic
-                samples.append(sample_ns)
+def _open_writer(
+    bag_path: pathlib.Path,
+    storage_id: str,
+) -> rosbag2_py.SequentialWriter:
+    """Open a ROS 2 bag writer."""
+    writer = rosbag2_py.SequentialWriter()
 
-                msg_out = Conversions.to_feature_image(msg.header, ret)
-                bag_out.write(topic_map[topic], msg_out, t)
-                if not add_clip_vector:
-                    continue
+    storage_options = rosbag2_py.StorageOptions(
+        uri=str(bag_path),
+        storage_id=storage_id,
+    )
+    converter_options = rosbag2_py.ConverterOptions(
+        input_serialization_format="cdr",
+        output_serialization_format="cdr",
+    )
 
-                clip_topic = _get_clip_topic(topic_map[topic])
-                clip_msg = Conversions.to_stamped_feature(
-                    msg.header, ret.image_embedding
+    writer.open(storage_options, converter_options)
+    return writer
+
+
+def _topic_metadata(
+    name: str,
+    type_name: str,
+) -> rosbag2_py.TopicMetadata:
+    """Create topic metadata compatible with ROS 2 Jazzy."""
+    return rosbag2_py.TopicMetadata(
+        name=name,
+        type=type_name,
+        serialization_format="cdr",
+        offered_qos_profiles="",
+    )
+
+
+def _get_topic_type_map(
+    reader: rosbag2_py.SequentialReader,
+) -> Dict[str, str]:
+    """Return topic names mapped to ROS interface type names."""
+    return {
+        topic.name: topic.type
+        for topic in reader.get_all_topics_and_types()
+    }
+
+
+def _register_output_topics(
+    writer: rosbag2_py.SequentialWriter,
+    input_topic_types: Dict[str, str],
+    topic_map: TopicMap,
+    copy_original_messages: bool,
+    add_clip_vector: bool,
+) -> None:
+    """Register all topics that can be written to the output bag."""
+    registered: Dict[str, str] = {}
+
+    def register(topic_name: str, type_name: str) -> None:
+        existing_type = registered.get(topic_name)
+
+        if existing_type is not None:
+            if existing_type != type_name:
+                raise RuntimeError(
+                    f"Topic '{topic_name}' would have two message types: "
+                    f"'{existing_type}' and '{type_name}'."
                 )
-                bag_out.write(clip_topic, clip_msg, t)
+            return
 
-    return path_out
+        writer.create_topic(
+            _topic_metadata(topic_name, type_name)
+        )
+        registered[topic_name] = type_name
+
+    if copy_original_messages:
+        for topic_name, type_name in input_topic_types.items():
+            register(topic_name, type_name)
+
+    for output_topic in topic_map.values():
+        register(
+            output_topic,
+            "semantic_inference_msgs/msg/FeatureImage",
+        )
+
+        if add_clip_vector:
+            register(
+                _get_clip_topic(output_topic),
+                "semantic_inference_msgs/msg/FeatureVectorStamped",
+            )
 
 
-def _copy_bag_contents(path_in, path_out):
-    click.secho(f"Writing messages to '{path_out}' from '{path_in}'", fg="green")
-    path_in = str(path_in)
-    path_out = str(path_out)
-    with rosbag.Bag(path_in, "r") as bag, rosbag.Bag(path_out, "a") as bag_out:
-        N = bag.get_message_count()
-        for topic, msg, t in tqdm.tqdm(bag.read_messages(), total=N):
-            bag_out.write(topic, msg, t)
+def _load_model(
+    config_path: Optional[str],
+) -> OpensetSegmenter:
+    """Load the open-set segmentation model."""
+    resolved_config_path: Optional[pathlib.Path] = None
 
-
-def _load_model(config_path):
     if config_path is not None:
-        config_path = pathlib.Path(config_path).expanduser().absolute()
+        resolved_config_path = (
+            pathlib.Path(config_path)
+            .expanduser()
+            .resolve()
+        )
 
-    if config_path is None or not config_path.exists():
-        click.secho("No config provided, using default!", fg="yellow")
+    if (
+        resolved_config_path is None
+        or not resolved_config_path.exists()
+    ):
+        click.secho(
+            "No configuration provided; using defaults.",
+            fg="yellow",
+        )
         config = OpensetSegmenterConfig()
     else:
-        config = Config.load(OpensetSegmenterConfig, config_path)
-        click.secho(f"Using segmenter config from '{config_path}'", fg="green")
+        config = Config.load(
+            OpensetSegmenterConfig,
+            resolved_config_path,
+        )
+        click.secho(
+            f"Using segmenter configuration from "
+            f"'{resolved_config_path}'",
+            fg="green",
+        )
 
     click.secho("Initializing segmenter...", fg="green")
-    model = OpensetSegmenter(config).to(default_device())
+
+    model = OpensetSegmenter(config)
+    model.to_device(default_device())
     model.eval()
-    click.secho("Finished initializing segmenter!", fg="green")
+
+    click.secho(
+        "Finished initializing segmenter.",
+        fg="green",
+    )
+
     return model
 
 
+def _count_selected_messages(
+    bag_path: pathlib.Path,
+    storage_id: str,
+    selected_topics: Iterable[str],
+) -> int:
+    """Count selected messages for progress reporting."""
+    selected = set(selected_topics)
+    reader = _open_reader(bag_path, storage_id)
+
+    count = 0
+    while reader.has_next():
+        topic, _serialized_data, _timestamp = reader.read_next()
+        if topic in selected:
+            count += 1
+
+    return count
+
+
+def _write_output_bag(
+    model: OpensetSegmenter,
+    input_path: pathlib.Path,
+    output_path: pathlib.Path,
+    topic_map: TopicMap,
+    timing_samples: List[int],
+    add_clip_vector: bool,
+    copy_original_messages: bool,
+    input_storage_id: str,
+    output_storage_id: str,
+) -> None:
+    """Read the input bag and write generated and optional original messages."""
+    reader = _open_reader(
+        input_path,
+        input_storage_id,
+    )
+    writer = _open_writer(
+        output_path,
+        output_storage_id,
+    )
+
+    topic_type_map = _get_topic_type_map(reader)
+
+    missing_topics = [
+        topic
+        for topic in topic_map
+        if topic not in topic_type_map
+    ]
+    if missing_topics:
+        raise RuntimeError(
+            "The following input topics are not present in the bag: "
+            + ", ".join(missing_topics)
+        )
+
+    _register_output_topics(
+        writer=writer,
+        input_topic_types=topic_type_map,
+        topic_map=topic_map,
+        copy_original_messages=copy_original_messages,
+        add_clip_vector=add_clip_vector,
+    )
+
+    message_classes = {
+        topic: get_message(type_name)
+        for topic, type_name in topic_type_map.items()
+        if topic in topic_map
+    }
+
+    selected_message_count = _count_selected_messages(
+        input_path,
+        input_storage_id,
+        topic_map.keys(),
+    )
+
+    progress = tqdm.tqdm(
+        total=selected_message_count,
+        desc="Segmenting images",
+    )
+
+    try:
+        while reader.has_next():
+            topic, serialized_data, timestamp = reader.read_next()
+
+            if copy_original_messages:
+                writer.write(
+                    topic,
+                    serialized_data,
+                    timestamp,
+                )
+
+            if topic not in topic_map:
+                continue
+
+            message_class = message_classes[topic]
+            input_message = deserialize_message(
+                serialized_data,
+                message_class,
+            )
+
+            image = Conversions.to_image(
+                input_message,
+                msg_type=topic_type_map[topic],
+            )
+
+            start_ns = time.perf_counter_ns()
+
+            with torch.inference_mode():
+                result = model.segment(
+                    image,
+                    is_rgb_order=False,
+                )
+                result = result.cpu()
+
+            timing_samples.append(
+                time.perf_counter_ns() - start_ns
+            )
+
+            feature_image_message = (
+                Conversions.to_feature_image(
+                    input_message.header,
+                    result,
+                )
+            )
+
+            writer.write(
+                topic_map[topic],
+                serialize_message(feature_image_message),
+                timestamp,
+            )
+
+            if add_clip_vector:
+                clip_message = (
+                    Conversions.to_stamped_feature(
+                        input_message.header,
+                        result.image_embedding,
+                    )
+                )
+
+                writer.write(
+                    _get_clip_topic(topic_map[topic]),
+                    serialize_message(clip_message),
+                    timestamp,
+                )
+
+            progress.update(1)
+    finally:
+        progress.close()
+
+
+def _remove_path(path: pathlib.Path) -> None:
+    """Remove a file or directory if it exists."""
+    if not path.exists():
+        return
+
+    if path.is_dir():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+
+
+def _replace_bag(
+    temporary_bag: pathlib.Path,
+    destination: pathlib.Path,
+) -> None:
+    """Replace the destination bag directory with a generated bag."""
+    backup_path = destination.with_name(
+        f"{destination.name}.backup"
+    )
+
+    _remove_path(backup_path)
+
+    if destination.exists():
+        destination.rename(backup_path)
+
+    try:
+        shutil.move(
+            str(temporary_bag),
+            str(destination),
+        )
+    except Exception:
+        if destination.exists():
+            _remove_path(destination)
+
+        if backup_path.exists():
+            backup_path.rename(destination)
+
+        raise
+
+    _remove_path(backup_path)
+
+
 @click.command()
-@click.argument("input_path", type=click.Path(exists=True))
-@click.argument("topics", type=str, nargs=-1)
-@click.option("--output", "-o", default=None, type=click.Path())
-@click.option("--copy/--no-copy", default=False, help="copy bag to output")
-@click.option("--clip-vec/--no-clip-vec", default=True, help="add image clip vector")
-@click.option(
-    "--config-path", "-c", default=None, type=click.Path(), help="segmentation config"
+@click.argument(
+    "input_path",
+    type=click.Path(exists=True, path_type=pathlib.Path),
 )
-@click.option("--yes", "-y", is_flag=True, help="skip prompts")
+@click.argument(
+    "topics",
+    type=str,
+    nargs=-1,
+)
+@click.option(
+    "--output",
+    "-o",
+    default=None,
+    type=click.Path(path_type=pathlib.Path),
+    help="Output ROS 2 bag directory.",
+)
+@click.option(
+    "--copy/--no-copy",
+    default=False,
+    help="Copy all original messages into the output bag.",
+)
+@click.option(
+    "--clip-vec/--no-clip-vec",
+    default=True,
+    help="Add the global image CLIP embedding.",
+)
+@click.option(
+    "--config-path",
+    "-c",
+    default=None,
+    type=click.Path(path_type=pathlib.Path),
+    help="Open-set segmentation configuration file.",
+)
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    help="Skip confirmation prompts.",
+)
 @click.option(
     "--timing-log-path",
     "-t",
     default=None,
-    type=click.Path(),
-    help="timing log path save",
+    type=click.Path(path_type=pathlib.Path),
+    help="Write one inference-time sample in nanoseconds per line.",
 )
-def main(input_path, topics, output, copy, clip_vec, config_path, yes, timing_log_path):
+@click.option(
+    "--input-storage-id",
+    default="sqlite3",
+    show_default=True,
+    help="Storage plugin used by the input bag, such as sqlite3 or mcap.",
+)
+@click.option(
+    "--output-storage-id",
+    default="sqlite3",
+    show_default=True,
+    help="Storage plugin used for the output bag.",
+)
+def main(
+    input_path: pathlib.Path,
+    topics: Tuple[str, ...],
+    output: Optional[pathlib.Path],
+    copy: bool,
+    clip_vec: bool,
+    config_path: Optional[pathlib.Path],
+    yes: bool,
+    timing_log_path: Optional[pathlib.Path],
+    input_storage_id: str,
+    output_storage_id: str,
+) -> None:
     """
-    Parse a rosbag and compute openset segmentation for each image.
+    Compute open-set segmentation for selected image topics in a ROS 2 bag.
 
-    Args:
-        input_path: Input rosbag to read RGB images from
-        topics: RGB Image topics to read
+    TOPICS use the form:
 
-    Usage:
-        make_rosbag /path/to/bag [INPUT_TOPIC[:TOPIC_REMAP]...]
+        INPUT_TOPIC[:OUTPUT_TOPIC]
+
+    Example:
+
+        make_rosbag /path/to/input_bag \\
+          /camera/color/image_raw:/semantic/image_raw
     """
-    input_path = pathlib.Path(input_path).expanduser().absolute()
-    if output is not None:
-        output = pathlib.Path(output).expanduser().absolute()
-        if output.exists() and output != input_path:
-            click.secho(f"Output bag '{output}' already exists!", fg="red")
-            if not yes:
-                click.confirm("Overwrite?", abort=True, default=False)
+    input_path = input_path.expanduser().resolve()
 
-    overwriting = output is None or output == input_path
+    if not topics:
+        raise click.UsageError(
+            "At least one input image topic is required."
+        )
+
+    topic_pairs = [
+        _split_topics(topic)
+        for topic in topics
+    ]
+    topic_map = {
+        input_topic: output_topic
+        for input_topic, output_topic in topic_pairs
+    }
+
+    if len(topic_map) != len(topic_pairs):
+        raise click.UsageError(
+            "The same input topic was specified more than once."
+        )
+
+    overwriting = (
+        output is None
+        or output.expanduser().resolve() == input_path
+    )
+
     if overwriting:
-        click.secho(f"Writing to input bag '{input_path}'!", fg="yellow")
+        destination = input_path
+
+        click.secho(
+            f"The input bag '{input_path}' will be replaced.",
+            fg="yellow",
+        )
+
         if not yes:
-            click.confirm("Proceed?", abort=True, default=False)
-
-    click.secho(f"Reading from '{input_path}'", fg="green")
-    click.secho("Topics:", fg="green")
-    topics = [_split_topics(x) for x in topics]
-    topic_map = {t_in: t_out for t_in, t_out in topics}
-    click.secho(_show_topic_map(topic_map, clip_vec), fg="green")
-
-    model = _load_model(config_path)
-
-    timing_samples = []
-    temp_path = _write_bag(model, input_path, topic_map, timing_samples, clip_vec)
-
-    if overwriting:
-        _copy_bag_contents(temp_path, input_path)
+            click.confirm(
+                "Proceed?",
+                abort=True,
+                default=False,
+            )
     else:
-        if copy:
-            click.secho(f"Copying input '{input_path}' →  '{output}'", fg="green")
-            shutil.copy2(input_path, output)
-            _copy_bag_contents(temp_path, output)
+        destination = output.expanduser().resolve()
+
+        if destination.exists():
+            click.secho(
+                f"Output bag '{destination}' already exists.",
+                fg="red",
+            )
+
+            if not yes:
+                click.confirm(
+                    "Overwrite it?",
+                    abort=True,
+                    default=False,
+                )
+
+            _remove_path(destination)
+
+    click.secho(
+        f"Reading from '{input_path}'",
+        fg="green",
+    )
+    click.secho("Topics:", fg="green")
+    click.secho(
+        _show_topic_map(topic_map, clip_vec),
+        fg="green",
+    )
+
+    model = _load_model(
+        str(config_path)
+        if config_path is not None
+        else None
+    )
+
+    timing_samples: List[int] = []
+
+    # ROS 2 bag writers create a directory, not a single .bag file.
+    temporary_parent = pathlib.Path(
+        tempfile.mkdtemp(prefix="semantic_bag_")
+    )
+    temporary_bag = temporary_parent / "output_bag"
+
+    # Replacing an input bag must retain the original messages.
+    copy_original_messages = copy or overwriting
+
+    try:
+        _write_output_bag(
+            model=model,
+            input_path=input_path,
+            output_path=temporary_bag,
+            topic_map=topic_map,
+            timing_samples=timing_samples,
+            add_clip_vector=clip_vec,
+            copy_original_messages=copy_original_messages,
+            input_storage_id=input_storage_id,
+            output_storage_id=output_storage_id,
+        )
+
+        if overwriting:
+            _replace_bag(
+                temporary_bag,
+                destination,
+            )
         else:
-            shutil.move(temp_path, output)
+            shutil.move(
+                str(temporary_bag),
+                str(destination),
+            )
+    finally:
+        _remove_path(temporary_parent)
 
     if timing_log_path is not None:
-        with open(timing_log_path, "w") as f:
+        timing_log_path = (
+            timing_log_path
+            .expanduser()
+            .resolve()
+        )
+        timing_log_path.parent.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        with timing_log_path.open(
+            "w",
+            encoding="utf-8",
+        ) as timing_file:
             for sample in timing_samples:
-                f.write(f"{sample}\n")
+                timing_file.write(f"{sample}\n")
+
+    click.secho(
+        f"Finished writing '{destination}'",
+        fg="green",
+    )
 
 
 if __name__ == "__main__":

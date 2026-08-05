@@ -27,32 +27,93 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
-"""Module containing ROS logging shim."""
+# Copyright (c) 2026, IHMC Robotics Lab.
+# All rights reserved.
+#
+"""Module containing ROS 2 logging shim."""
+
+import logging
+from typing import Optional
+
+from rclpy.logging import get_logger
+from rclpy.node import Node
 
 from semantic_inference_python import Logger
-import logging
-import rospy
 
 
-# adapted from https://gist.github.com/ablakey/4f57dca4ea75ed29c49ff00edf622b38
 class RosForwarder(logging.Handler):
-    """Class to forward logging to ros handler."""
+    """Forward standard Python logging records to ROS 2 logging."""
 
-    level_map = {
-        logging.DEBUG: rospy.logdebug,
-        logging.INFO: rospy.loginfo,
-        logging.WARNING: rospy.logwarn,
-        logging.ERROR: rospy.logerr,
-        logging.CRITICAL: rospy.logfatal,
-    }
+    def __init__(
+        self,
+        node: Optional[Node] = None,
+        logger_name: str = "semantic_inference",
+    ) -> None:
+        """
+        Initialize the ROS 2 logging forwarder.
 
-    def emit(self, record):
-        """Send message to ROS."""
-        level = record.levelno if record.levelno in self.level_map else logging.CRITICAL
-        self.level_map[level](f"{record.name}: {record.msg}")
+        Args:
+            node: Optional ROS 2 node. When provided, its logger is used.
+            logger_name: Logger name used when no node is provided.
+        """
+        super().__init__()
+
+        self._ros_logger = (
+            node.get_logger()
+            if node is not None
+            else get_logger(logger_name)
+        )
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Forward one Python logging record to ROS 2."""
+        try:
+            message = (
+                f"{record.name}: {record.getMessage()}"
+            )
+
+            if record.levelno >= logging.CRITICAL:
+                self._ros_logger.fatal(message)
+            elif record.levelno >= logging.ERROR:
+                self._ros_logger.error(message)
+            elif record.levelno >= logging.WARNING:
+                self._ros_logger.warning(message)
+            elif record.levelno >= logging.INFO:
+                self._ros_logger.info(message)
+            else:
+                self._ros_logger.debug(message)
+
+        except Exception:
+            self.handleError(record)
 
 
-def setup_ros_log_forwarding(level=logging.INFO):
-    """Forward logging to ROS."""
-    Logger.addHandler(RosForwarder())
-    Logger.setLevel(logging.INFO)
+def setup_ros_log_forwarding(
+    node: Optional[Node] = None,
+    level: int = logging.INFO,
+) -> RosForwarder:
+    """
+    Forward semantic-inference Python logs to ROS 2.
+
+    Args:
+        node: Optional ROS 2 node whose logger should receive messages.
+        level: Minimum Python logging level to forward.
+
+    Returns:
+        The installed logging handler.
+    """
+    handler = RosForwarder(
+        node=node,
+    )
+    handler.setLevel(level)
+
+    # Avoid installing duplicate handlers if this function is called more
+    # than once.
+    for existing_handler in Logger.handlers:
+        if isinstance(existing_handler, RosForwarder):
+            existing_handler.setLevel(level)
+            Logger.setLevel(level)
+            return existing_handler
+
+    Logger.addHandler(handler)
+    Logger.setLevel(level)
+
+    return handler

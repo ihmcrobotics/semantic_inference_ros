@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""Node to encode language prompts as embeddings."""
+"""ROS 2 node that encodes language prompts as embeddings."""
+
 from dataclasses import dataclass
 from typing import Any
 
-import rospy
+import rclpy
+from rclpy.node import Node
+
 import semantic_inference_ros
 from semantic_inference_python import Config, config_field
 from semantic_inference_python.models import default_device
@@ -13,38 +16,67 @@ from semantic_inference_python.models import default_device
 class LanguageEmbeddingNodeConfig(Config):
     """Configuration for LanguageEmbeddingNode."""
 
-    model: Any = config_field("clip", default="open_clip")
+    model: Any = config_field(
+        "clip",
+        default="open_clip",
+    )
     use_cuda: bool = True
 
 
-class LanguageEmbeddingNode:
-    """Node implementation."""
+class LanguageEmbeddingNode(Node):
+    """Provide language-prompt embedding services."""
 
-    def __init__(self):
-        """Construct a feature encoder node."""
-        self.config = semantic_inference_ros.load_from_ros(
-            LanguageEmbeddingNodeConfig, ns="~"
+    def __init__(self) -> None:
+        """Initialize the model and prompt encoder."""
+        super().__init__("language_embedding_node")
+
+        self.config = semantic_inference_ros.load_from_ros2(
+            LanguageEmbeddingNodeConfig,
+            self,
         )
 
-        rospy.loginfo(f"'{rospy.get_name()}': Initializing with {self.config.show()}")
-        self._model = self.config.model.create().to(
-            default_device(self.config.use_cuda)
+        self.get_logger().info(
+            f"'{self.get_name()}': Initializing with "
+            f"{self.config.show()}"
         )
-        rospy.loginfo(f"'{rospy.get_name()}': finished initializing!")
-        self._embedder = semantic_inference_ros.PromptEncoder(self._model)
 
-    def spin(self):
-        """Wait until ROS shuts down."""
-        rospy.spin()
+        device = default_device(
+            self.config.use_cuda
+        )
+
+        self._model = (
+            self.config.model
+            .create()
+            .to(device)
+        )
+
+        self._model.eval()
+
+        self._embedder = semantic_inference_ros.PromptEncoder(
+            node=self,
+            model=self._model,
+        )
+
+        self.get_logger().info(
+            f"'{self.get_name()}': finished initializing!"
+        )
 
 
-def main():
-    """Start the node."""
-    rospy.init_node("language_embedding_node")
-    semantic_inference_ros.setup_ros_log_forwarding()
+def main(args=None) -> None:
+    """Start the ROS 2 language-embedding node."""
+    rclpy.init(args=args)
 
     node = LanguageEmbeddingNode()
-    node.spin()
+
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":
