@@ -32,26 +32,26 @@ python3.12 -m venv --system-site-packages ros_semantics_env
 source ros_semantics_env/bin/activate
 python3 -m pip install -U pip
 python3 -m pip install -r requirements.txt
-cd ..
 ```
-Install ROS dependencies:
+Install ROS dependencies from root package (`reasoning-hydra-sg`):
+
 ```bash
+cd ../../..
 source /opt/ros/jazzy/setup.bash
 
 rosdep install \
-    --from-paths . \
-    --ignore-src \
-    --rosdistro jazzy \
-    -r \
-    -y
+  --from-paths src/semantic_inference_ros \
+  --ignore-src \
+  --rosdistro jazzy \
+  -r \
+  -y
 ```
-Build and source the workspace:
+Build and source the workspace from root package (`reasoning-hydra-sg`): 
 ```bash
 colcon build \
-    --symlink-install \
-    --continue-on-error \
-    --cmake-args -DCMAKE_BUILD_TYPE=Release
-source install/setup.bash
+  --symlink-install \
+  --packages-up-to semantic_inference_ros \
+  --cmake-args -DCMAKE_BUILD_TYPE=Release
 ```
 
 ## Usage
