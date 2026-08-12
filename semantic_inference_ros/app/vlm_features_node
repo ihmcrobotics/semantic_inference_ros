@@ -2,6 +2,7 @@
 """ROS 2 node that extracts VLM relationship features."""
 
 from dataclasses import dataclass, field
+from pathlib import Path
 import time
 from typing import Optional
 
@@ -15,6 +16,7 @@ from rclpy.time import Time
 from scipy.spatial.transform import Rotation as R
 import tf2_ros
 import torch
+import yaml
 
 from hydra_msgs.msg import ActiveObjectRelationships
 from semantic_inference_msgs.msg import FeatureVectorsStamped
@@ -56,12 +58,12 @@ class VLMFeaturesNode(Node):
 
     def __init__(self) -> None:
         """Initialize the model, publishers, subscribers, and worker."""
-        super().__init__("vlm_features_node")
-
-        self.config = semantic_inference_ros.load_from_ros2(
-            VLMFeatureNodeConfig,
-            self,
+        super().__init__(
+            "vlm_features_node",
+            automatically_declare_parameters_from_overrides=True,
         )
+
+        self.config = self._load_configuration()
 
         self.get_logger().info(
             f"'{self.get_name()}': Initializing with "
@@ -167,6 +169,54 @@ class VLMFeaturesNode(Node):
         self.get_logger().info(
             f"'{self.get_name()}': finished initializing!"
         )
+
+    def _load_configuration(self) -> VLMFeatureNodeConfig:
+        """Load the VLM YAML and apply ROS 2 launch overrides."""
+        config_path = Path(
+            self.get_parameter("config_path").value
+        ).expanduser()
+
+        if not config_path.is_file():
+            raise FileNotFoundError(
+                f"VLM configuration file does not exist: '{config_path}'"
+            )
+
+        config = VLMFeatureNodeConfig()
+        config.model = Config.load(
+            models.VLMFeatureExtractorConfig,
+            config_path,
+        )
+
+        ros_overrides = semantic_inference_ros.load_ros2_params(self)
+        ros_overrides.pop("config_path", None)
+        labelspace_path_value = ros_overrides.pop(
+            "labelspace_path",
+            None,
+        )
+
+        if ros_overrides:
+            config.update(ros_overrides)
+
+        if labelspace_path_value:
+            labelspace_path = Path(
+                labelspace_path_value
+            ).expanduser()
+
+            if not labelspace_path.is_file():
+                raise FileNotFoundError(
+                    "Label-space configuration file does not exist: "
+                    f"'{labelspace_path}'"
+                )
+
+            with labelspace_path.open("r") as labelspace_file:
+                labelspace = yaml.safe_load(labelspace_file) or {}
+
+            config.model.object_labels = [
+                int(label_id)
+                for label_id in labelspace.get("object_labels", [])
+            ]
+
+        return config
 
     def set_active_edges(
         self,

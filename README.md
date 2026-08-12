@@ -108,6 +108,16 @@ Supported VLM backbones include:
 
 - InstructBLIP
 - DeepSeek-VL2
+- Qwen3VL (Cosmos-Reason-2-2B)
+
+To use InstructBLIP, using `export_blip_visual.py` script is optional because the normal InstructBLIP wrapper already knows how to extract `.vision_model` automatically. That export script becomes useful when you want to avoid that normal PyTorch path and instead do:
+```
+InstructBLIP vision encoder
+        ↓
+       ONNX
+        ↓
+     TensorRT
+```
 
 To use DeepSeek-VL2, first extract the visual encoder.
 
@@ -115,10 +125,18 @@ For the large model used in our experiments:
 
 https://huggingface.co/ntnu-arl/deepseek-vl2-vision-enc
 
-Alternatively, extract it locally:
+Alternatively, extract deepseek locally:
 
 ```bash
 python3 semantic_inference_python/scripts/extract_deepseek_visual.py \
+    --model_name <model_name> \
+    --output_path <output_path>
+```
+
+Or, extract qwen3-vl locally:
+
+```bash
+python3 semantic_inference_python/scripts/extract_qwen3vl_visual.py \
     --model_name <model_name> \
     --output_path <output_path>
 ```

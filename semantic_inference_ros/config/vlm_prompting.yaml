@@ -1,6 +1,6 @@
 vlm_prompt:
   type: instruct_blip # instruct_blip_visual, deepseek
-  model_name: Salesforce/instructblip-vicuna-7b
+  model_name: Salesforce/instructblip-flan-t5-xl
   model_path: ""
   # BLIP: Salesforce/instructblip-flan-t5-xl,
   #       Salesforce/instructblip-flan-t5-xxl,

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
+import os
 from pathlib import Path
+import sys
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -10,6 +12,10 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description() -> LaunchDescription:
+    python_executable = str(
+        Path(os.environ.get("VIRTUAL_ENV", sys.prefix)) / "bin" / "python"
+    )
+
     semantic_inference_ros_share = Path(
         get_package_share_directory("semantic_inference_ros")
     )
@@ -48,13 +54,8 @@ def generate_launch_description() -> LaunchDescription:
             ),
             DeclareLaunchArgument(
                 "python_env",
-                default_value=str(
-                    semantic_inference_python_share
-                    / "ros_semantics_env"
-                    / "bin"
-                    / "python"
-                ),
-                description="Python environment for semantic inference",
+                default_value=python_executable,
+                description="Python interpreter for semantic inference",
             ),
             DeclareLaunchArgument(
                 "navigation_topic",
@@ -128,6 +129,8 @@ def generate_launch_description() -> LaunchDescription:
                             config_file,
                         "use_cuda":
                             use_cuda,
+                        "vlm_reasoning.verbose":
+                            verbose,
                         "vlm_reasoning.llm_response_parser_prompt_path":
                             llm_response_parser_prompt_path,
                         "recolor.colormap_path":

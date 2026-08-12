@@ -1,5 +1,9 @@
 vlm_reasoning:
-  use_server: true
+  use_server: false #true if vlm is ran on remote server, false if vlm is ran locally
+  vlm:
+    type: instruct_blip
+    model_name: Salesforce/instructblip-flan-t5-xl
+    model_path: ""
   vlm_client_config:
     base_url: YOUR_SERVER_URL_HERE
     timeout: 3600

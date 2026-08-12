@@ -794,14 +794,19 @@ class InstructBLIP(nn.Module):
         self.config = config
         if os.path.exists(self.config.model_path):
             self.model = InstructBlipForConditionalGeneration.from_pretrained(
-                config.model_path
+                config.model_path, torch_dtype=torch.float16
             )
             self.processor = InstructBlipProcessor.from_pretrained(config.model_path)
         else:
             self.model = InstructBlipForConditionalGeneration.from_pretrained(
-                config.model_name
+                config.model_name, torch_dtype=torch.float16
             )
             self.processor = InstructBlipProcessor.from_pretrained(config.model_name)
+
+        parameter = next(self.model.parameters())
+        print(f"Model dtype after loading: {parameter.dtype}", flush=True)
+        print(f"Model device after loading: {parameter.device}", flush=True)
+
         self.verbose = verbose
         self._canary_param = nn.Parameter(torch.empty(0))
 

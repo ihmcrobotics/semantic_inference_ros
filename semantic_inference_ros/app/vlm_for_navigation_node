@@ -3,6 +3,7 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 import time
 from typing import Any, Optional
 
@@ -60,16 +61,21 @@ class VLMForNavigationNode(Node):
 
     def __init__(self) -> None:
         """Initialize configuration, model, interfaces, and worker."""
-        super().__init__("vlm_for_navigation_node")
-
-        self.config = semantic_inference_ros.load_from_ros2(
-            VLMForNavigationNodeConfig,
-            self,
+        super().__init__(
+            "vlm_for_navigation_node",
+            automatically_declare_parameters_from_overrides=True,
         )
 
+        self.config = self._load_configuration()
+
         # ROS 2 replacement for dynamic_reconfigure.
-        self.declare_parameter("mode", self._mode_value(self.config.mode))
-        self.declare_parameter("deterministic_vlm", False)
+        if not self.has_parameter("mode"):
+            self.declare_parameter(
+                "mode",
+                self._mode_value(self.config.mode),
+            )
+        if not self.has_parameter("deterministic_vlm"):
+            self.declare_parameter("deterministic_vlm", False)
 
         self._parameter_callback = self.add_on_set_parameters_callback(
             self._on_parameters_changed
@@ -183,6 +189,34 @@ class VLMForNavigationNode(Node):
         self.get_logger().info(
             f"Device {self._vlm_reasoning.device} is used for inference."
         )
+
+    def _load_configuration(self) -> VLMForNavigationNodeConfig:
+        """Load the navigation YAML and apply ROS 2 launch overrides."""
+        config_path = Path(
+            self.get_parameter("config_path").value
+        ).expanduser()
+
+        if not config_path.is_file():
+            raise FileNotFoundError(
+                "VLM navigation configuration file does not exist: "
+                f"'{config_path}'"
+            )
+
+        config = Config.load(
+            VLMForNavigationNodeConfig,
+            config_path,
+        )
+
+        ros_overrides = semantic_inference_ros.load_ros2_params(self)
+        ros_overrides.pop("config_path", None)
+
+        if ros_overrides:
+            config.update(ros_overrides)
+
+        if isinstance(config.mode, str):
+            config.mode = Mode(config.mode)
+
+        return config
 
     @staticmethod
     def _mode_value(mode: Any) -> str:
