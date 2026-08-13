@@ -104,14 +104,18 @@ Configuration:
 semantic_inference_ros/config/vlm.yaml
 ```
 
-Supported VLM backbones include:
+Three VLM backbones are supported:
 
-- InstructBLIP
-- DeepSeek-VL2
-- Qwen3VL (Cosmos-Reason-2-2B)
+- [InstructBLIP](https://huggingface.co/collections/Salesforce/instructblip-models)
+- [DeepSeek-VL2](https://huggingface.co/deepseek-ai/deepseek-vl2)
+- Qwen3VL, used by Cosmos-Reason-2-2B
 
-To use InstructBLIP, using `export_blip_visual.py` script is optional because the normal InstructBLIP wrapper already knows how to extract `.vision_model` automatically. That export script becomes useful when you want to avoid that normal PyTorch path and instead do:
-```
+For **InstructBLIP**, exporting the vision encoder is optional. The standard
+wrapper loads the checkpoint and selects its `.vision_model` automatically.
+Use `export_blip_visual.py` only when preparing the vision encoder for an
+ONNX/TensorRT deployment path:
+
+```text
 InstructBLIP vision encoder
         ↓
        ONNX
@@ -119,29 +123,27 @@ InstructBLIP vision encoder
      TensorRT
 ```
 
-To use DeepSeek-VL2, first extract the visual encoder.
-
-For the large model used in our experiments:
-
-https://huggingface.co/ntnu-arl/deepseek-vl2-vision-enc
-
-Alternatively, extract deepseek locally:
+For **DeepSeek-VL2**, extract the vision encoder before use. The extracted
+large encoder used in the original experiments is available
+[on Hugging Face](https://huggingface.co/ntnu-arl/deepseek-vl2-vision-enc).
+Alternatively, extract it locally—the large model may require approximately
+100 GB of system RAM:
 
 ```bash
 python3 semantic_inference_python/scripts/extract_deepseek_visual.py \
-    --model_name <model_name> \
-    --output_path <output_path>
+  --model_name <model_name> \
+  --output_path <output_path>
 ```
 
-Or, extract qwen3-vl locally:
+For **Cosmos-Reason-2-2B**, extract its Qwen3VL vision component locally:
 
 ```bash
 python3 semantic_inference_python/scripts/extract_qwen3vl_visual.py \
-    --model_name <model_name> \
-    --output_path <output_path>
+  --model_name <model_name> \
+  --output_path <output_path>
 ```
 
-Then update the model path in:
+Set the resulting model path and matching VLM type in:
 
 ```
 semantic_inference_ros/config/vlm.yaml
