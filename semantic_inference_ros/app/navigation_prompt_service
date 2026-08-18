@@ -2,6 +2,7 @@
 """ROS 2 node that provides navigation prompts."""
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import rclpy
@@ -25,7 +26,7 @@ class NavigationPromptNodeConfig(Config):
 
     navigation_prompter: Any = config_field(
         "navigation_prompter",
-        default="openai",
+        default="qwen",
     )
 
 
@@ -34,12 +35,12 @@ class NavigationPromptNode(Node):
 
     def __init__(self) -> None:
         """Initialize the prompt generator, service, and publisher."""
-        super().__init__("navigation_prompt_service")
-
-        self.config = semantic_inference_ros.load_from_ros2(
-            NavigationPromptNodeConfig,
-            self,
+        super().__init__(
+            "navigation_prompt_service",
+            automatically_declare_parameters_from_overrides=True,
         )
+
+        self.config = self._load_configuration()
 
         self.get_logger().info(
             f"'{self.get_name()}': Initializing with "
@@ -63,6 +64,28 @@ class NavigationPromptNode(Node):
         self.get_logger().info(
             f"'{self.get_name()}': finished initializing!"
         )
+
+    def _load_configuration(self) -> NavigationPromptNodeConfig:
+        """Load the navigation parser YAML and apply ROS 2 overrides."""
+        config_path = Path(
+            self.get_parameter("config_path").value
+        ).expanduser()
+
+        if not config_path.is_file():
+            raise FileNotFoundError(
+                "Navigation prompt configuration file does not exist: "
+                f"'{config_path}'"
+            )
+
+        config = Config.load(
+            NavigationPromptNodeConfig,
+            config_path,
+        )
+        ros_overrides = semantic_inference_ros.load_ros2_params(self)
+        ros_overrides.pop("config_path", None)
+        if ros_overrides:
+            config.update(ros_overrides)
+        return config
 
     def _callback(
         self,

@@ -62,6 +62,10 @@ from semantic_inference_ros.sync_images_worker import (
     SyncImagesWorker,
     SyncImagesWorkerConfig,
 )
+from semantic_inference_ros.vlm_text_generator import (
+    VLMGeometry,
+    VLMTextGenerator,
+)
 
 __all__ = [
     "Conversions",
@@ -75,6 +79,8 @@ __all__ = [
     "SubscriberWorkerConfig",
     "SyncImagesWorker",
     "SyncImagesWorkerConfig",
+    "VLMGeometry",
+    "VLMTextGenerator",
     "load_from_ros2",
     "load_ros2_params",
     "setup_ros_log_forwarding",

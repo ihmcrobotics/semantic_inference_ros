@@ -72,7 +72,7 @@ class VLMForNavigationOutput:
 class VLMForNavigationConfig(Config):
     """Main configuration for the VLM for navigation model."""
 
-    vlm: Any = config_field("vlm", default="instruct_blip")
+    vlm: Any = config_field("vlm", default="cosmos_reason2")
     use_server: bool = False
     vlm_client_config: FastAPIClientConfig = field(default_factory=FastAPIClientConfig)
     use_llm_response_parser: bool = True

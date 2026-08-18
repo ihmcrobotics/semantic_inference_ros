@@ -104,11 +104,10 @@ Configuration:
 semantic_inference_ros/config/vlm.yaml
 ```
 
-Three VLM backbones are supported:
+The maintained VLM backbones are:
 
 - [InstructBLIP](https://huggingface.co/collections/Salesforce/instructblip-models)
-- [DeepSeek-VL2](https://huggingface.co/deepseek-ai/deepseek-vl2)
-- Qwen3VL, used by Cosmos-Reason-2-2B
+- Qwen3VL, used by [Cosmos-Reason2-2B](https://huggingface.co/nvidia/Cosmos-Reason2-2B)
 
 For **InstructBLIP**, exporting the vision encoder is optional. The standard
 wrapper loads the checkpoint and selects its `.vision_model` automatically.
@@ -123,31 +122,79 @@ InstructBLIP vision encoder
      TensorRT
 ```
 
-For **DeepSeek-VL2**, extract the vision encoder before use. The extracted
-large encoder used in the original experiments is available
-[on Hugging Face](https://huggingface.co/ntnu-arl/deepseek-vl2-vision-enc).
-Alternatively, extract it locally—the large model may require approximately
-100 GB of system RAM:
-
-```bash
-python3 semantic_inference_python/scripts/extract_deepseek_visual.py \
-  --model_name <model_name> \
-  --output_path <output_path>
-```
-
 For **Cosmos-Reason-2-2B**, extract its Qwen3VL vision component locally:
 
+The setup instructions above already install the pinned Transformers version
+from `requirements.txt`; no additional installation is needed here.
+
 ```bash
+export HF_HOME="${HF_HOME:-$HOME/.cache/huggingface}"
+
+python3 -c "from transformers import Qwen3VLForConditionalGeneration; print('Qwen3VL support is available')"
+
 python3 semantic_inference_python/scripts/extract_qwen3vl_visual.py \
-  --model_name <model_name> \
-  --output_path <output_path>
+  --model_name nvidia/Cosmos-Reason2-2B \
+  --output_path "$HF_HOME/semantic_inference/cosmos-reason2-2b-visual"
 ```
 
-Set the resulting model path and matching VLM type in:
+Transformers 4.57.6 is pinned by this repository to provide the required
+Qwen3VL model and processor APIs reproducibly.
 
+The full downloaded checkpoint remains in Hugging Face's managed
+`$HF_HOME/hub` cache. The command produces `config.json`, `vision_config.json`,
+and `vision.pt` under `$HF_HOME/semantic_inference`, outside the Hub cache's
+internal directory structure.
+The `qwen3vl_visual` runtime wrapper loads the extracted model and returns
+fixed-size relationship features. Select it in
+`semantic_inference_ros/config/vlm.yaml`, rebuild the package, and launch
+`vlm_features_node`.
+
+Cosmos-Reason2 is used in two stages:
+
+```text
+RGB image + object relationships
+        ↓
+qwen3vl_visual (extracted vision encoder)
+        ↓
+196 × 2048 relationship-feature tensor
+        ↓
+cosmos_reason2 (language model from the full checkpoint)
+        ↓
+relationship labels or navigation decisions
 ```
-semantic_inference_ros/config/vlm.yaml
+
+In the complete navigation pipeline, detection, retrieval, and VLM reasoning
+have distinct roles:
+
+```text
+RGB + depth → YOLOE → masks/classes → Hydra object nodes
+                                           │
+Instruction → Qwen3-1.7B → object names    │
+                         → OpenCLIP → candidate object search
+                                           │
+RGB + object pairs → Qwen3VL relationship features
+                                           │
+candidate objects + prompt + relationship features
+                         → Cosmos-Reason2 → selected objects
+                         → Hydra find_paths → navigation output
 ```
+
+YOLOE creates the object observations and OpenCLIP retrieves candidates from
+the instruction. The VLM connection occurs after that retrieval: Qwen3VL
+encodes object-pair appearance, and Cosmos-Reason2 decides whether those
+relationships are relevant to the requested navigation task.
+
+The extracted `vision.pt` is sufficient for `vlm_features_node`. The
+generative nodes also load the language portion of the full
+`nvidia/Cosmos-Reason2-2B` checkpoint from the Hugging Face cache.
+
+To turn relationship-feature messages into text labels, run:
+
+```bash
+ros2 launch semantic_inference_ros vlm_text_generator.launch.py
+```
+
+This launch uses `semantic_inference_ros/config/vlm_prompting.yaml`.
 
 Launch for VLM Reasoning:
 
@@ -161,18 +208,28 @@ Configuration:
 semantic_inference_ros/config/vlm_for_navigation.yaml
 ```
 
-Before launching, export the required API keys:
+The default configuration runs Cosmos-Reason2 locally (`use_server: false`)
+and disables the optional GPT response parser, so it does not require OpenAI
+or FastAPI credentials. API keys are only needed if those optional remote
+paths are explicitly enabled.
+
+Initial task instructions are parsed locally by `Qwen/Qwen3-1.7B`, configured
+in `semantic_inference_ros/config/navigation_prompt_parser.yaml`. Qwen returns
+the same structured `objects` and `interactions` JSON previously requested
+from OpenAI. OpenCLIP then embeds those object names for Hydra object search.
+The model is downloaded to the Hugging Face cache on first launch:
 
 ```bash
-export OPENAI_API_KEY=<your_openai_api_key>
-export FASTAPI_API_KEY=<your_fastapi_api_key>
+ros2 launch semantic_inference_ros navigation_prompt_parser.launch.py
 ```
 
-The DeepSeek-VL2 FastAPI server can be found at:
+For the complete local VLM path, start the nodes in this order:
 
-https://github.com/ntnu-arl/DeepSeek-VL2/tree/server
-
-
+```bash
+ros2 launch semantic_inference_ros vlm_features.launch.py
+ros2 launch semantic_inference_ros vlm_text_generator.launch.py
+ros2 launch semantic_inference_ros vlm_for_navigation.launch.py
+```
 
 ## Repository Structure
 
@@ -186,16 +243,14 @@ semantic_inference_ros/
 │   └── src/
 │       └── semantic_inference_python/
 │           └── models/
-│               └── deepseek/
 ├── semantic_inference_ros/
 ├── LICENSE
 └── README.md
 ```
 
-The repository includes the following Git submodules:
+The repository includes the following project submodule:
 
 - `config_utilities`
-- `DeepSeek-VL2`
 
 Initialize them after cloning with:
 

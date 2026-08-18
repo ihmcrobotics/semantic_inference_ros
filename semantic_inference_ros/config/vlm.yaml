@@ -10,17 +10,10 @@ include_bbs: True
 use_graph_edges: False
 
 vlm:
-  type: instruct_blip_visual # instruct_blip_visual # deepseek_visual #cosmos_reason2_visual
-  model_name: Salesforce/instructblip-flan-t5-xl
-  # model_path: PATH_TO_DS_VISUAL_MODEL #/home/ihmc/jetson_ssd/cache/cosmos_reason2_vision
-  # processor_path: deepseek-ai/deepseek-vl2
-  # BLIP: Salesforce/instructblip-flan-t5-xl,
-  #       Salesforce/instructblip-flan-t5-xxl,
-  #       Salesforce/instructblip-vicuna-7b,
-  #       Salesforce/instructblip-vicuna-13b
-  # DeepSeek: deepseek-ai/deepseek-vl2-tiny,
-  #           deepseek-ai/deepseek-vl2-small,
-  #           deepseek-ai/deepseek-vl2
-  # Cosmos: nvidia/Cosmos-Reason2-2B
+  type: qwen3vl_visual
+  model_name: nvidia/Cosmos-Reason2-2B
+  model_path: ~/.cache/huggingface/semantic_inference/cosmos-reason2-2b-visual
+  processor_path: ""
+  image_size: 448
+  dtype: bfloat16
   cropping: False
-  cuda_batch_size: 2

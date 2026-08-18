@@ -22,6 +22,8 @@ from rclpy.logging import get_logger
 from semantic_inference_python.client import (
     OpenAIClient,
     OpenAIClientConfig,
+    QwenClient,
+    QwenClientConfig,
 )
 from semantic_inference_python.config import (
     Config,
@@ -545,6 +547,61 @@ class OpenAIPrompterConfig(Config):
 
     client_config: OpenAIClientConfig = field(
         default_factory=OpenAIClientConfig
+    )
+    system_prompts_path: str = ""
+    examples_path: str = ""
+    labels_path: str = ""
+    clip_model: Any = config_field(
+        "clip",
+        default="open_clip",
+    )
+    use_cuda: bool = True
+
+
+class QwenPrompter(OpenAIPrompter):
+    """Generate structured navigation prompts using a local Qwen model."""
+
+    def __init__(self, config: "QwenPrompterConfig") -> None:
+        """Initialize local Qwen generation and OpenCLIP embeddings."""
+        self.config = config
+        self.clip_model = self.config.clip_model.create().to(
+            default_device(self.config.use_cuda)
+        )
+        self.clip_model.eval()
+
+        self.system_prompt = ""
+        self.labels: List[str] = []
+        self._load_system_prompt()
+        self._load_labels()
+        self._load_examples()
+
+        self.client = QwenClient(
+            config=self.config.client_config,
+            system_prompt=self.system_prompt,
+        )
+        LOGGER.info(
+            "Initialized local Qwen navigation prompter."
+        )
+
+    @classmethod
+    def construct(cls, **kwargs) -> "QwenPrompter":
+        """Construct a local Qwen prompter from configuration arguments."""
+        config = QwenPrompterConfig()
+        config.update(kwargs)
+        return cls(config)
+
+
+@register_config(
+    "navigation_prompter",
+    name="qwen",
+    constructor=QwenPrompter,
+)
+@dataclass
+class QwenPrompterConfig(Config):
+    """Configuration for the local Qwen navigation prompter."""
+
+    client_config: QwenClientConfig = field(
+        default_factory=QwenClientConfig
     )
     system_prompts_path: str = ""
     examples_path: str = ""

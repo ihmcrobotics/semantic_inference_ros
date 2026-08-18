@@ -5,6 +5,7 @@ relationship with visual features.
 """
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import rclpy
@@ -21,7 +22,7 @@ class EncodeVLMLabelsNodeConfig(Config):
 
     vlm_prompt: Any = config_field(
         "vlm",
-        default="instruct_blip",
+        default="cosmos_reason2",
     )
     use_bb_corners: bool = True
     use_cuda: bool = False
@@ -37,12 +38,12 @@ class EncodeVLMLabelsNode(Node):
 
     def __init__(self) -> None:
         """Initialize configuration, model, and VLM text generator."""
-        super().__init__("encode_vlm_labels_node")
-
-        self.config = semantic_inference_ros.load_from_ros2(
-            EncodeVLMLabelsNodeConfig,
-            self,
+        super().__init__(
+            "encode_vlm_labels_node",
+            automatically_declare_parameters_from_overrides=True,
         )
+
+        self.config = self._load_configuration()
 
         self.get_logger().info(
             f"'{self.get_name()}': Initializing with "
@@ -76,6 +77,35 @@ class EncodeVLMLabelsNode(Node):
         self.get_logger().info(
             f"'{self.get_name()}': finished initializing!"
         )
+
+    def _load_configuration(self) -> EncodeVLMLabelsNodeConfig:
+        """Load the prompting YAML and apply ROS 2 launch overrides."""
+        config_path = Path(
+            self.get_parameter("config_path").value
+        ).expanduser()
+
+        if not config_path.is_file():
+            raise FileNotFoundError(
+                "VLM prompting configuration file does not exist: "
+                f"'{config_path}'"
+            )
+
+        config = Config.load(
+            EncodeVLMLabelsNodeConfig,
+            config_path,
+        )
+
+        ros_overrides = semantic_inference_ros.load_ros2_params(self)
+        ros_overrides.pop("config_path", None)
+        if ros_overrides:
+            config.update(ros_overrides)
+
+        if isinstance(config.geometry, str):
+            config.geometry = semantic_inference_ros.VLMGeometry(
+                config.geometry
+            )
+
+        return config
 
 
 def main(args=None) -> None:

@@ -57,20 +57,19 @@ import torch.nn as nn
 import torchvision
 import math
 from PIL import Image
-from transformers import InstructBlipProcessor
+from transformers import (
+    AutoProcessor,
+    InstructBlipProcessor,
+    Qwen3VLForConditionalGeneration,
+    Qwen3VLVisionModel,
+)
+from transformers.models.qwen3_vl.configuration_qwen3_vl import (
+    Qwen3VLVisionConfig,
+)
 from semantic_inference_python import root_path
 from semantic_inference_python.config import Config, register_config
 from semantic_inference_python.models.instruct_blip import (
     InstructBlipForConditionalGeneration,
-)
-from semantic_inference_python.models.deepseek.deepseek_vl2.models import (
-    DeepseekVLV2ForCausalLM,
-    DeepseekVLV2Processor,
-    select_best_resolution,
-    VisionTransformer,
-    MlpProjector,
-    VisionEncoderConfig,
-    MlpProjectorConfig,
 )
 import supervision as sv
 from supervision.draw.color import Color, ColorPalette
@@ -900,6 +899,193 @@ class InstructBLIPConfig(Config):
         return Config.load(cls, filepath)
 
 
+class CosmosReason2(nn.Module):
+    """Cosmos-Reason2 generator using precomputed Qwen3VL image features."""
+
+    def __init__(self, config, verbose=False) -> None:
+        """Load Cosmos-Reason2 and its processor."""
+        super().__init__()
+        self.config = config
+        self.verbose = verbose
+
+        model_source = (
+            str(Path(config.model_path).expanduser())
+            if config.model_path
+            else config.model_name
+        )
+        processor_source = config.processor_path or model_source
+        self.processor = AutoProcessor.from_pretrained(processor_source)
+        self.processor.tokenizer.padding_side = "left"
+        self.model = Qwen3VLForConditionalGeneration.from_pretrained(
+            model_source,
+            dtype=self.dtype,
+            low_cpu_mem_usage=True,
+        ).eval()
+
+        # Relationship features are already produced by qwen3vl_visual. The
+        # full checkpoint's duplicate visual encoder is not needed at runtime.
+        self.model.model.visual = None
+        self._canary_param = nn.Parameter(torch.empty(0))
+
+    @classmethod
+    def construct(cls, **kwargs):
+        """Load the model from a configuration dictionary."""
+        config = CosmosReason2Config()
+        config.update(kwargs)
+        return cls(config)
+
+    @property
+    def dtype(self):
+        """Resolve the configured inference dtype."""
+        if self.config.dtype == "bfloat16":
+            return torch.bfloat16
+        if self.config.dtype == "float16":
+            return torch.float16
+        if self.config.dtype == "float32":
+            return torch.float32
+        raise ValueError(f"Unsupported Cosmos-Reason2 dtype: {self.config.dtype}")
+
+    @property
+    def device(self):
+        """Get the current model device."""
+        return self._canary_param.device
+
+    def _prompt_with_image_tokens(self, prompt, token_count):
+        """Build a chat prompt containing one placeholder per image token."""
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image"},
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ]
+        text = self.processor.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        image_token = self.processor.image_token
+        if text.count(image_token) != 1:
+            raise RuntimeError(
+                "Expected one Qwen3VL image placeholder in the chat template"
+            )
+        return text.replace(image_token, image_token * token_count, 1)
+
+    def generate_caption(self, image_embeds, text, max_batch_size=1):
+        """Generate responses from precomputed Qwen3VL relationship features."""
+        if len(image_embeds) != len(text):
+            raise ValueError("Mismatched image_embeds and text lengths")
+        if image_embeds.ndim != 3:
+            raise ValueError(
+                "Cosmos-Reason2 expects image embeddings with shape "
+                f"[batch, tokens, channels], received {tuple(image_embeds.shape)}"
+            )
+
+        expected_grid = torch.tensor(self.config.image_grid_thw, dtype=torch.long)
+        merge_size = self.model.config.vision_config.spatial_merge_size
+        expected_tokens = int(expected_grid.prod().item()) // (merge_size**2)
+        if image_embeds.shape[1] != expected_tokens:
+            raise ValueError(
+                "Qwen3VL feature token count does not match image_grid_thw: "
+                f"received {image_embeds.shape[1]}, expected {expected_tokens} "
+                f"for {self.config.image_grid_thw}"
+            )
+        if image_embeds.shape[2] != self.model.config.vision_config.out_hidden_size:
+            raise ValueError(
+                "Qwen3VL feature width does not match Cosmos-Reason2: "
+                f"received {image_embeds.shape[2]}, expected "
+                f"{self.model.config.vision_config.out_hidden_size}"
+            )
+
+        results = []
+        for start in range(0, len(text), max_batch_size):
+            feature_batch = image_embeds[start : start + max_batch_size].to(
+                device=self.device,
+                dtype=self.dtype,
+            )
+            prompt_batch = text[start : start + max_batch_size]
+            formatted = [
+                self._prompt_with_image_tokens(prompt, expected_tokens)
+                for prompt in prompt_batch
+            ]
+            tokenized = self.processor.tokenizer(
+                formatted,
+                padding=True,
+                return_tensors="pt",
+            ).to(self.device)
+            input_ids = tokenized["input_ids"]
+            attention_mask = tokenized["attention_mask"]
+            inputs_embeds = self.model.get_input_embeddings()(input_ids)
+            image_mask = input_ids == self.model.config.image_token_id
+            if not torch.all(image_mask.sum(dim=1) == expected_tokens):
+                raise RuntimeError("Qwen3VL image placeholder expansion failed")
+            inputs_embeds = inputs_embeds.masked_scatter(
+                image_mask.unsqueeze(-1).expand_as(inputs_embeds),
+                feature_batch.reshape(-1),
+            )
+
+            image_grid_thw = expected_grid.to(self.device).repeat(
+                len(prompt_batch), 1
+            )
+            position_ids, rope_deltas = self.model.model.get_rope_index(
+                input_ids=input_ids,
+                image_grid_thw=image_grid_thw,
+                attention_mask=attention_mask,
+            )
+            self.model.model.rope_deltas = rope_deltas
+
+            generation_kwargs = {
+                "inputs_embeds": inputs_embeds,
+                "attention_mask": attention_mask,
+                "position_ids": position_ids,
+                "max_new_tokens": self.config.max_new_tokens,
+                "do_sample": self.config.do_sample,
+                "num_beams": self.config.num_beams,
+                "repetition_penalty": self.config.repetition_penalty,
+            }
+            if self.config.do_sample:
+                generation_kwargs.update(
+                    temperature=self.config.temperature,
+                    top_p=self.config.top_p,
+                )
+
+            with torch.inference_mode():
+                output = self.model.generate(**generation_kwargs)
+            results.extend(
+                self.processor.batch_decode(output, skip_special_tokens=True)
+            )
+
+        return [result.strip() for result in results]
+
+
+@register_config("vlm", name="cosmos_reason2", constructor=CosmosReason2)
+@dataclasses.dataclass
+class CosmosReason2Config(Config):
+    """Configuration for Cosmos-Reason2 with precomputed visual features."""
+
+    model_name: str = "nvidia/Cosmos-Reason2-2B"
+    model_path: str = ""
+    processor_path: str = ""
+    dtype: str = "bfloat16"
+    image_grid_thw: List[int] = dataclasses.field(
+        default_factory=lambda: [1, 28, 28]
+    )
+    max_new_tokens: int = 128
+    do_sample: bool = False
+    num_beams: int = 1
+    top_p: float = 0.9
+    repetition_penalty: float = 1.0
+    temperature: float = 1.0
+    cropping: bool = False
+
+    @classmethod
+    def load(cls, filepath):
+        """Load a Cosmos-Reason2 configuration."""
+        return Config.load(cls, filepath)
+
+
 class TRTInferenceBLIP(TRTInference):
     def __init__(self, engine_path):
         super().__init__(engine_path)
@@ -951,6 +1137,149 @@ class TRTInferenceBLIP(TRTInference):
             )
         finally:
             cuda.Context.pop()
+
+
+class Qwen3VLVisualEncoder(nn.Module):
+    """Vision-only Qwen3VL encoder extracted from Cosmos-Reason2."""
+
+    def __init__(self, config, verbose=False) -> None:
+        """Load an extracted Qwen3VL visual encoder and matching processor."""
+        super().__init__()
+        self.config = config
+        self.verbose = verbose
+
+        model_path = Path(config.model_path).expanduser()
+        config_path = model_path / "vision_config.json"
+        weights_path = model_path / "vision.pt"
+        if not config_path.is_file():
+            raise FileNotFoundError(f"Qwen3VL vision config not found: {config_path}")
+        if not weights_path.is_file():
+            raise FileNotFoundError(f"Qwen3VL vision weights not found: {weights_path}")
+
+        with config_path.open() as file:
+            vision_config = Qwen3VLVisionConfig.from_dict(json.load(file))
+
+        self.model = Qwen3VLVisionModel(vision_config)
+        state_dict = torch.load(weights_path, map_location="cpu", weights_only=True)
+        self.model.load_state_dict(state_dict, strict=True)
+        del state_dict
+        self.model.to(dtype=self.dtype).eval()
+
+        processor_source = config.processor_path or config.model_name
+        self.processor = AutoProcessor.from_pretrained(processor_source)
+        self._canary_param = nn.Parameter(torch.empty(0))
+
+    @classmethod
+    def construct(cls, **kwargs):
+        """Load the model from a configuration dictionary."""
+        config = Qwen3VLVisualConfig()
+        config.update(kwargs)
+        return cls(config)
+
+    @property
+    def dtype(self):
+        """Resolve the configured inference dtype."""
+        if self.config.dtype == "bfloat16":
+            return torch.bfloat16
+        if self.config.dtype == "float16":
+            return torch.float16
+        if self.config.dtype == "float32":
+            return torch.float32
+        raise ValueError(f"Unsupported Qwen3VL dtype: {self.config.dtype}")
+
+    def move_to(self, device):
+        """Move the visual encoder to the requested device."""
+        device = torch.device(device)
+        if device.type == "cuda" and self.dtype == torch.bfloat16:
+            if not torch.cuda.is_bf16_supported():
+                raise RuntimeError(
+                    "Qwen3VL is configured for bfloat16, but this GPU does not "
+                    "support BF16. Set dtype to float16."
+                )
+        self.model.to(device=device, dtype=self.dtype)
+        self._canary_param = nn.Parameter(torch.empty(0, device=device))
+
+    @staticmethod
+    def _to_pil(image):
+        """Convert a tensor or NumPy image to RGB PIL format."""
+        if isinstance(image, torch.Tensor):
+            image = image.detach().cpu().numpy()
+        if not isinstance(image, np.ndarray):
+            raise ValueError("Images must be NumPy arrays or torch tensors")
+        if image.dtype != np.uint8:
+            image = np.clip(image, 0, 255).astype(np.uint8)
+        return Image.fromarray(image).convert("RGB")
+
+    def encode_images(self, images: List[np.ndarray]):
+        """Encode images as a fixed-size batch of Qwen3VL visual tokens."""
+        if not images:
+            raise ValueError("At least one image is required")
+
+        size = (self.config.image_size, self.config.image_size)
+        pil_images = [self._to_pil(image).resize(size) for image in images]
+        inputs = self.processor.image_processor(
+            images=pil_images,
+            return_tensors="pt",
+        )
+        pixel_values = inputs["pixel_values"].to(
+            device=self.device,
+            dtype=self.dtype,
+        )
+        image_grid_thw = inputs["image_grid_thw"].to(self.device)
+
+        with torch.inference_mode():
+            features = self.model(pixel_values, grid_thw=image_grid_thw)
+        if isinstance(features, (tuple, list)):
+            features = features[0]
+        elif hasattr(features, "last_hidden_state"):
+            features = features.last_hidden_state
+        if not isinstance(features, torch.Tensor):
+            raise TypeError(
+                f"Unexpected Qwen3VL visual output type: {type(features)}"
+            )
+
+        merge_size = self.model.config.spatial_merge_size
+        token_counts = (
+            image_grid_thw.prod(dim=1) // (merge_size * merge_size)
+        ).tolist()
+        split_features = torch.split(features, token_counts, dim=0)
+        if len(set(token_counts)) != 1:
+            raise RuntimeError(
+                "Fixed-size Qwen3VL preprocessing produced inconsistent token "
+                f"counts: {token_counts}"
+            )
+        return torch.stack(split_features, dim=0)
+
+    def forward(self, images):
+        """Encode a batch of images."""
+        return self.encode_images(images)
+
+    @property
+    def device(self):
+        """Get the current model device."""
+        return self._canary_param.device
+
+
+@register_config(
+    "vlm",
+    name="qwen3vl_visual",
+    constructor=Qwen3VLVisualEncoder,
+)
+@dataclasses.dataclass
+class Qwen3VLVisualConfig(Config):
+    """Configuration for the extracted Cosmos-Reason2 Qwen3VL encoder."""
+
+    model_name: str = "nvidia/Cosmos-Reason2-2B"
+    model_path: str = "~/.cache/huggingface/semantic_inference/cosmos-reason2-2b-visual"
+    processor_path: str = ""
+    image_size: int = 448
+    dtype: str = "bfloat16"
+    cropping: bool = False
+
+    @classmethod
+    def load(cls, filepath):
+        """Load a Qwen3VL visual configuration."""
+        return Config.load(cls, filepath)
 
 
 class InstructBLIPVisualEncoder(nn.Module):

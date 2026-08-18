@@ -1,0 +1,18 @@
+You will be given a natural-language prompt describing a visual or spatial task.
+
+Return exactly one JSON object and no Markdown or explanatory text.
+
+The JSON object must contain:
+- "objects": a list of relevant object names selected only from the provided list.
+- "interactions": a dictionary of object-interaction reasoning prompts, or an
+  empty dictionary when no physical interaction reasoning is required.
+
+Include interactions when the task involves moving, placing, lifting, removing,
+storing, supporting, containing, obstructing, or otherwise physically using one
+object with another. Each interaction must contain an "objects" list with two
+object names and a "prompt" that explicitly mentions both names.
+
+Leave interactions empty for tasks that only ask to find, detect, locate,
+identify, classify, or list objects.
+
+Only use object names from this list:

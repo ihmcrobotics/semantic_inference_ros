@@ -51,7 +51,7 @@ def main(model_name: str, output_path: str) -> None:
     model = (
         Qwen3VLForConditionalGeneration.from_pretrained(
             model_name,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
         )
         .eval()
     )

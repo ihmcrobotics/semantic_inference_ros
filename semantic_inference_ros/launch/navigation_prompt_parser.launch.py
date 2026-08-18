@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+import os
+import sys
 from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
@@ -15,6 +17,9 @@ def generate_launch_description() -> LaunchDescription:
     )
     semantic_inference_python_share = Path(
         get_package_share_directory("semantic_inference_python")
+    )
+    python_executable = str(
+        Path(os.environ.get("VIRTUAL_ENV", sys.prefix)) / "bin" / "python"
     )
     hydra_share = Path(get_package_share_directory("hydra"))
 
@@ -34,12 +39,7 @@ def generate_launch_description() -> LaunchDescription:
             ),
             DeclareLaunchArgument(
                 "python_env",
-                default_value=str(
-                    semantic_inference_python_share
-                    / "ros_semantics_env"
-                    / "bin"
-                    / "python"
-                ),
+                default_value=python_executable,
                 description="Python environment for semantic inference",
             ),
             DeclareLaunchArgument(
@@ -57,7 +57,7 @@ def generate_launch_description() -> LaunchDescription:
                     semantic_inference_python_share
                     / "config"
                     / "system_prompts"
-                    / "gpt_system_prompt.txt"
+                    / "navigation_system_prompt.txt"
                 ),
                 description="Path to the system prompts file",
             ),

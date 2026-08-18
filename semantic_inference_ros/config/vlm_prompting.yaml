@@ -1,15 +1,14 @@
 vlm_prompt:
-  type: instruct_blip # instruct_blip_visual, deepseek
-  model_name: Salesforce/instructblip-flan-t5-xl
+  type: cosmos_reason2
+  model_name: nvidia/Cosmos-Reason2-2B
   model_path: ""
-  # BLIP: Salesforce/instructblip-flan-t5-xl,
-  #       Salesforce/instructblip-flan-t5-xxl,
-  #       Salesforce/instructblip-vicuna-7b,
-  #       Salesforce/instructblip-vicuna-13b
-  # DeepSeek: deepseek-ai/deepseek-vl2-tiny,
-  #           deepseek-ai/deepseek-vl2-small,
-  #           deepseek-ai/deepseek-vl2
-  use_cuda: True
-  cuda_batch_size: 2
+  processor_path: ""
+  dtype: bfloat16
+  image_grid_thw: [1, 28, 28]
+  max_new_tokens: 128
+  do_sample: false
+  num_beams: 1
+  repetition_penalty: 1.0
   cropping: False
+use_cuda: True
 geometry: none

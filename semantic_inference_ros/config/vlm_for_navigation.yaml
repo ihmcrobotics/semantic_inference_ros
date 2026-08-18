@@ -1,9 +1,16 @@
 vlm_reasoning:
   use_server: false #true if vlm is ran on remote server, false if vlm is ran locally
   vlm:
-    type: instruct_blip
-    model_name: Salesforce/instructblip-flan-t5-xl
+    type: cosmos_reason2
+    model_name: nvidia/Cosmos-Reason2-2B
     model_path: ""
+    processor_path: ""
+    dtype: bfloat16
+    image_grid_thw: [1, 28, 28]
+    max_new_tokens: 128
+    do_sample: false
+    num_beams: 1
+    repetition_penalty: 1.0
   vlm_client_config:
     base_url: YOUR_SERVER_URL_HERE
     timeout: 3600
@@ -12,10 +19,8 @@ vlm_reasoning:
     result_endpoint: result
     verify_ssl: true
     logging: true
-  use_llm_response_parser: true
+  use_llm_response_parser: false
   verbose: true
   include_bbs: true
-  openai_client_config:
-    model: gpt-4o
 find_paths_method: dijkstra
 mode: one_by_one
