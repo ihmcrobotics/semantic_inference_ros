@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
+import os
 from pathlib import Path
+import sys
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -393,10 +395,9 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument(
             "python_env",
             default_value=str(
-                semantic_inference_python_share
-                / "ros_semantics_env"
-                / "bin"
-                / "python"
+                Path(os.environ["VIRTUAL_ENV"]) / "bin" / "python"
+                if "VIRTUAL_ENV" in os.environ
+                else Path(sys.executable)
             ),
         ),
         DeclareLaunchArgument(

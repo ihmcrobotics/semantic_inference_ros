@@ -12,7 +12,7 @@ use_graph_edges: False
 vlm:
   type: qwen3vl_visual
   model_name: nvidia/Cosmos-Reason2-2B
-  model_path: ~/.cache/huggingface/semantic_inference/cosmos-reason2-2b-visual
+  model_path: $SCENE_GRAPH_ASSETS/models/vlm_vision_encoder/cosmos-reason2-2b-visual
   processor_path: ""
   image_size: 448
   dtype: bfloat16

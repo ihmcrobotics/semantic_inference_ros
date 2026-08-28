@@ -566,7 +566,7 @@ class DeepSeekVL2Visual(nn.Module):
         self.processor: DeepseekVLV2Processor = DeepseekVLV2Processor.from_pretrained(
             config.processor_path
         )
-        base_path = Path(self.config.model_path)
+        base_path = Path(os.path.expandvars(self.config.model_path)).expanduser()
         if (base_path / "config.json").exists():
             with (base_path / "config.json").open() as f:
                 models_config = json.load(f)
@@ -909,7 +909,7 @@ class CosmosReason2(nn.Module):
         self.verbose = verbose
 
         model_source = (
-            str(Path(config.model_path).expanduser())
+            str(Path(os.path.expandvars(config.model_path)).expanduser())
             if config.model_path
             else config.model_name
         )
@@ -1148,7 +1148,7 @@ class Qwen3VLVisualEncoder(nn.Module):
         self.config = config
         self.verbose = verbose
 
-        model_path = Path(config.model_path).expanduser()
+        model_path = Path(os.path.expandvars(config.model_path)).expanduser()
         config_path = model_path / "vision_config.json"
         weights_path = model_path / "vision.pt"
         if not config_path.is_file():
@@ -1270,7 +1270,7 @@ class Qwen3VLVisualConfig(Config):
     """Configuration for the extracted Cosmos-Reason2 Qwen3VL encoder."""
 
     model_name: str = "nvidia/Cosmos-Reason2-2B"
-    model_path: str = "~/.cache/huggingface/semantic_inference/cosmos-reason2-2b-visual"
+    model_path: str = "$SCENE_GRAPH_ASSETS/models/vlm_vision_encoder/cosmos-reason2-2b-visual"
     processor_path: str = ""
     image_size: int = 448
     dtype: str = "bfloat16"
@@ -1382,14 +1382,17 @@ class YOLOESegmentation(nn.Module):
 
         self.config = config
         self.config.parse_groups()
+        model_name = os.path.expandvars(
+            os.path.expanduser(config.yolo_model_name)
+        )
         if (
-            config.yolo_model_name[-3:] == ".pt"
-            and "anymal" not in config.yolo_model_name
+            model_name.endswith(".pt")
+            and "alex" not in model_name.lower()
         ):
-            self.yoloe = YOLOE(config.yolo_model_name)
+            self.yoloe = YOLOE(model_name)
             self.set_classes()
         else:
-            self.yoloe = YOLO(config.yolo_model_name)
+            self.yoloe = YOLO(model_name)
 
         # if DUMMY_IMG_PATH.exists():
         #     img = cv2.imread(DUMMY_IMG_PATH)
@@ -1477,13 +1480,20 @@ class YOLOSAMSegmentation(nn.Module):
     def __init__(self, config, verbose=False):
         """Load Fast SAM."""
         super(YOLOSAMSegmentation, self).__init__()
-        from ultralytics import SAM, YOLO
+        from ultralytics import FastSAM, YOLO
 
         self.config = config
         self.config.parse_groups()
-        self.yolo = YOLO(config.yolo_model_name)
-        self.sam = SAM(config.model_name)
-        self.set_classes()
+        yolo_model_name = os.path.expandvars(
+            os.path.expanduser(config.yolo_model_name)
+        )
+        sam_model_name = os.path.expandvars(
+            os.path.expanduser(config.model_name)
+        )
+        self.yolo = YOLO(yolo_model_name, task="detect")
+        self.sam = FastSAM(sam_model_name)
+        if yolo_model_name.endswith(".pt"):
+            self.set_classes()
 
     def set_classes(self, batch=80) -> None:
         """Set classes for YOLO."""
@@ -1517,6 +1527,13 @@ class YOLOSAMSegmentation(nn.Module):
         config = YOLOSAMConfig()
         config.update(kwargs)
         return cls(config)
+
+    def to_device(self, device):
+        """Move PyTorch-backed models to the selected device."""
+        self._canary_param = nn.Parameter(torch.empty(0, device=device))
+        if self.config.yolo_model_name.endswith(".pt"):
+            self.yolo.to(device)
+        self.sam.to(device)
 
     def train(self, mode):
         """Don't pass train to underlying model."""
@@ -2056,6 +2073,9 @@ class OpenClipWrapper(nn.Module):
         """Load the visual encoder for OpenCLIP."""
         super(OpenClipWrapper, self).__init__()
         self.config = config
+        pretrained = os.path.expandvars(
+            os.path.expanduser(config.pretrained)
+        )
         if os.path.exists(self.config.model_path):
             self.model = TRTInferenceCLIPVision(self.config.model_path)
             (
@@ -2063,11 +2083,11 @@ class OpenClipWrapper(nn.Module):
                 _,
                 self._transform,
             ) = open_clip.create_model_and_transforms(
-                config.model_name, pretrained=config.pretrained, device="cpu"
+                config.model_name, pretrained=pretrained, device="cpu"
             )
         else:
             self.model, _, self._transform = open_clip.create_model_and_transforms(
-                config.model_name, pretrained=config.pretrained
+                config.model_name, pretrained=pretrained
             )
         self._canary_param = nn.Parameter(torch.empty(0))
         # TODO(nathan) load tokenize function

@@ -37,6 +37,7 @@
 
 #include <config_utilities/config_utilities.h>
 #include <config_utilities/parsing/context.h>
+#include <config_utilities/parsing/yaml.h>
 
 #include <cv_bridge/cv_bridge.hpp>
 #include <image_transport/image_transport.hpp>
@@ -52,6 +53,7 @@
 #include <sensor_msgs/msg/image.hpp>
 
 #include <functional>
+#include <cstdint>
 #include <memory>
 #include <opencv2/core.hpp>
 #include <stdexcept>
@@ -114,7 +116,56 @@ SegmentationNode::SegmentationNode(
     "ros",
     std::make_shared<RosLogSink>(get_logger()));
 
-  config_ = config::fromContext<Config>();
+  const auto config_file =
+      declare_parameter<std::string>("config_file", "");
+  const auto label_grouping_file =
+      declare_parameter<std::string>("label_grouping_file", "");
+
+  if (config_file.empty())
+  {
+    config_ = config::fromContext<Config>();
+  }
+  else
+  {
+    config_ = config::fromYamlFile<Config>(config_file);
+  }
+
+  if (!label_grouping_file.empty())
+  {
+    config_.output.recolor =
+        config::fromYamlFile<ImageRecolor::Config>(label_grouping_file);
+  }
+
+  const auto model_file =
+      declare_parameter<std::string>("model_file", "");
+  const auto engine_file =
+      declare_parameter<std::string>("engine_file", "");
+  const auto colormap_path =
+      declare_parameter<std::string>("colormap_path", "");
+
+  if (!model_file.empty())
+  {
+    config_.segmenter.model.model_file = model_file;
+  }
+  if (!engine_file.empty())
+  {
+    config_.segmenter.model.engine_file = engine_file;
+  }
+  if (!colormap_path.empty())
+  {
+    config_.output.recolor.colormap_path = colormap_path;
+  }
+
+  config_.segmenter.model.force_rebuild = declare_parameter<bool>(
+      "force_rebuild", config_.segmenter.model.force_rebuild);
+  config_.output.open_vocab = declare_parameter<bool>(
+      "open_vocab", config_.output.open_vocab);
+  config_.worker.max_queue_size = static_cast<std::size_t>(
+      declare_parameter<std::int64_t>(
+          "max_queue_size",
+          static_cast<std::int64_t>(config_.worker.max_queue_size)));
+  config_.worker.image_separation_s = declare_parameter<double>(
+      "image_separation_s", config_.worker.image_separation_s);
 
   SLOG(INFO) << "\n" << config::toString(config_);
   config::checkValid(config_);

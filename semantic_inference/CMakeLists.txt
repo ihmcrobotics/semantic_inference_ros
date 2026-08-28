@@ -8,7 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_compile_options(-Wall -Wextra)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-option(SEMANTIC_INFERENCE_USE_TRT "Build with TensorRT" OFF)
+option(SEMANTIC_INFERENCE_USE_TRT "Build with TensorRT" ON)
 option(SEMANTIC_INFERENCE_BUILD_TESTS "Build tests" ON)
 option(BUILD_SHARED_LIBS "Build shared libs" ON)
 
@@ -26,39 +26,56 @@ find_package(CUDA REQUIRED)
 # ----------------------------------------------------------------------
 
 if(SEMANTIC_INFERENCE_USE_TRT)
+  set(_TensorRT_ROOT_HINTS
+    ${CUDA_TOOLKIT_ROOT_DIR}
+    $ENV{CUDA_HOME}
+    $ENV{CUDA_PATH}
+    /usr/local/cuda
+  )
+
   find_path(
     TensorRT_INCLUDE_DIR
     NvInfer.h
-    PATHS
-      /usr/include
-      /usr/include/aarch64-linux-gnu
+    HINTS
+      ${CUDA_INCLUDE_DIRS}
+      ${_TensorRT_ROOT_HINTS}
+    PATH_SUFFIXES
+      include
+      targets/${CMAKE_LIBRARY_ARCHITECTURE}/include
   )
 
   find_library(
     TensorRT_LIBRARY
     nvinfer
-    PATHS
-      /usr/lib
-      /usr/lib/aarch64-linux-gnu
+    HINTS ${_TensorRT_ROOT_HINTS}
+    PATH_SUFFIXES
+      lib
+      lib64
+      targets/${CMAKE_LIBRARY_ARCHITECTURE}/lib
   )
 
   find_library(
     TensorRT_ONNXPARSER_LIBRARY
     nvonnxparser
-    PATHS
-      /usr/lib
-      /usr/lib/aarch64-linux-gnu
+    HINTS ${_TensorRT_ROOT_HINTS}
+    PATH_SUFFIXES
+      lib
+      lib64
+      targets/${CMAKE_LIBRARY_ARCHITECTURE}/lib
   )
 
   find_library(
     TensorRT_INFER_PLUGIN_LIBRARY
     nvinfer_plugin
-    PATHS
-      /usr/lib
-      /usr/lib/aarch64-linux-gnu
+    HINTS ${_TensorRT_ROOT_HINTS}
+    PATH_SUFFIXES
+      lib
+      lib64
+      targets/${CMAKE_LIBRARY_ARCHITECTURE}/lib
   )
 
-  if(TensorRT_INCLUDE_DIR AND TensorRT_LIBRARY)
+  if(TensorRT_INCLUDE_DIR AND TensorRT_LIBRARY AND
+     TensorRT_ONNXPARSER_LIBRARY AND TensorRT_INFER_PLUGIN_LIBRARY)
     message(STATUS "Found TensorRT: ${TensorRT_LIBRARY}")
     set(ENABLE_TENSORRT_CXX_VALUE 1)
 
@@ -93,7 +110,10 @@ if(SEMANTIC_INFERENCE_USE_TRT)
       )
     endif()
   else()
-    message(WARNING "TensorRT headers or libs not found. Inference disabled.")
+    message(WARNING
+      "TensorRT headers, core library, ONNX parser, or plugin library were not found. "
+      "Closed-vocabulary inference is disabled."
+    )
     set(ENABLE_TENSORRT_CXX_VALUE 0)
   endif()
 else()

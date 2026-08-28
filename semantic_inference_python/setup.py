@@ -22,7 +22,6 @@ setup(
             ["package.xml"],
         ),
     ],
-    install_requires=["setuptools"],
     zip_safe=True,
     maintainer="Arghya Chatterjee",
     maintainer_email="achatterjee@ihmc.org",

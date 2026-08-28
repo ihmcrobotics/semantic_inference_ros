@@ -13,4 +13,4 @@ navigation_prompter:
     type: open_clip
     model_name: ViT-B-32  # ViT-L/14, ViT-B/32
     tokenizer_name: ViT-B-32
-    pretrained: laion2b_s34b_b79k
+    pretrained: $SCENE_GRAPH_ASSETS/models/vlm_embedding_encoder/openclip/laion-clip-vit-b-32-s34b-b79k.safetensors

@@ -77,7 +77,7 @@ def generate_launch_description() -> LaunchDescription:
                     hydra_share
                     / "config"
                     / "label_spaces"
-                    / "anymal_label_space.yaml"
+                    / "alex_label_space.yaml"
                 ),
                 description="Path to the labels file",
             ),

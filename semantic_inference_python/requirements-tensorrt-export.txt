@@ -1,0 +1,11 @@
+# Isolated YOLOE TensorRT 11 export environment.
+# Do not install this file in the main uv project: its NumPy 2 dependencies are
+# incompatible with the ROS Jazzy cv_bridge binary on Ubuntu 24.04.
+numpy==2.5.2
+onnx==1.21.0
+onnxruntime-gpu==1.24.4
+nvidia-modelopt[onnx]==0.46.0
+torch==2.13.0
+torchvision==0.28.0
+ultralytics==8.4.121
+tensorrt==11.2.1.2

@@ -1,31 +1,63 @@
 ---
-segmentation:
-  type: yoloe
-  confidence: 0.4
-  iou: 0.85
-  output_size: 640
-  verbose: false
-refinement:
-  dilate_masks: true
-clip_model:
-  type: open_clip
-  model_name: ViT-B-32  # ViT-L/14, ViT-B/32
-  model_path: ""
-  tokenizer_name: ViT-B-32
-  pretrained: laion2b_s34b_b79k
-# controls pixel-aligned features
-use_dense: false
-dense_ratio: 0.9
-max_batch: 10
-max_batch_vlm: 6
-text_embeddings: True
-box_embeddings: False
-mask_embeddings: True
-text_embeddings_weight: 0.9
-box_embeddings_weight: 0.0
-mask_embeddings_weight: 0.1
-cuda: True
-verbose: False
-dense_representation_radius_m: 7.0
-min_depth: 0.05
-pub_detections: True
+model:
+  # Select exactly one segmentation block.
+
+  # YOLOE: instance segmentation is produced directly by the YOLOE engine.
+  segmentation:
+    type: yoloe
+    yolo_model_name: $SCENE_GRAPH_ASSETS/models/segmentation/pretrained/yoloe/alex-yoloe-11l-seg.engine
+    confidence: 0.4
+    iou: 0.85
+    output_size: 640
+    verbose: false
+
+  # YOLO-World + FastSAM: YOLO-World detects boxes and FastSAM produces masks.
+  # To use this backend, comment out the YOLOE block above and uncomment the
+  # complete block below.
+  # segmentation:
+  #   type: yolosam
+  #   yolo_model_name: $SCENE_GRAPH_ASSETS/models/segmentation/pretrained/yolow/alex-yolov8l-worldv2.engine
+  #   model_name: $SCENE_GRAPH_ASSETS/models/segmentation/pretrained/fastsam/FastSAM-x.pt
+  #   confidence: 0.4
+  #   iou: 0.85
+  #   output_size: 640
+  #   verbose: false
+
+  refinement:
+    dilate_masks: true
+
+  # Select exactly one image-text embedding encoder block.
+
+  # OpenCLIP: uses the local LAION ViT-B-32 checkpoint.
+  clip_model:
+    type: open_clip
+    model_name: ViT-B-32
+    model_path: ""
+    tokenizer_name: ViT-B-32
+    pretrained: $SCENE_GRAPH_ASSETS/models/vlm_embedding_encoder/openclip/laion-clip-vit-b-32-s34b-b79k.safetensors
+
+  # OpenAI CLIP: uses ViT-B-32.pt from CLIP_CACHE_DIR. To use this backend,
+  # comment out the OpenCLIP block above and uncomment the complete block below.
+  # clip_model:
+  #   type: clip
+  #   model_name: ViT-B/32
+  #   model_path: ""
+
+  # MobileCLIP is not selectable yet. The current runtime registers only
+  # `clip` and `open_clip`, and the local TorchScript artifacts do not expose
+  # the shared image-and-text encoder interface required by this node.
+
+  # Controls pixel-aligned features.
+  use_dense: false
+  dense_ratio: 0.9
+  max_batch: 10
+  text_embeddings: true
+  box_embeddings: false
+  mask_embeddings: true
+  text_embeddings_weight: 0.9
+  box_embeddings_weight: 0.0
+  mask_embeddings_weight: 0.1
+  cuda: true
+  dense_representation_radius_m: 7.0
+  min_depth: 0.05
+  pub_detections: true

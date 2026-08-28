@@ -86,13 +86,14 @@ std::map<int16_t, std::array<uint8_t, 3>> loadColormap(const fs::path& filepath,
       column = "";
     }
 
-    if (columns.size() != 6) {
+    if (columns.size() < 6) {
       SLOG(ERROR) << "Row " << row_number << " is invalid: [" << vecToString(columns)
                   << "]";
       continue;
     }
 
-    // We expect the CSV to have header: name, red, green, blue, alpha, id
+    // The first six columns are name, red, green, blue, alpha, and id.
+    // Additional columns, such as a human-readable color name, are metadata.
     const uint8_t r = std::atoi(columns[1].c_str());
     const uint8_t g = std::atoi(columns[2].c_str());
     const uint8_t b = std::atoi(columns[3].c_str());

@@ -36,6 +36,7 @@
 #include <memory>
 #include <numeric>
 #include <opencv2/core/mat.hpp>
+#include <optional>
 #include <string>
 
 namespace semantic_inference {

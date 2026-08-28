@@ -108,7 +108,7 @@ def generate_launch_description() -> LaunchDescription:
                 default_value=str(
                     semantic_inference_share
                     / "config"
-                    / "anymal.csv"
+                    / "alex.csv"
                 ),
                 description="Visualization colormap",
             ),

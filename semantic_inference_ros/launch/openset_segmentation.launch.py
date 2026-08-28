@@ -26,14 +26,9 @@ def generate_launch_description() -> LaunchDescription:
 
     config_path = LaunchConfiguration("config_path")
     min_separation_s = LaunchConfiguration("min_separation_s")
-    yolo_model_name = LaunchConfiguration("yolo_model_name")
     labelspace_name = LaunchConfiguration("labelspace_name")
     colormap_path = LaunchConfiguration("colormap_path")
-    segmentation_model = LaunchConfiguration("segmentation_model")
     segmentation_cuda = LaunchConfiguration("segmentation_cuda")
-    segmentation_model_name = LaunchConfiguration(
-        "segmentation_model_name"
-    )
     labelspace_dir = LaunchConfiguration("labelspace_dir")
     playback_mode = LaunchConfiguration("playback_mode")
     print_inference_time = LaunchConfiguration("print_inference_time")
@@ -90,11 +85,6 @@ def generate_launch_description() -> LaunchDescription:
                 description="Minimum time between processed RGB-D frames",
             ),
             DeclareLaunchArgument(
-                "yolo_model_name",
-                default_value="yoloe-11l-seg.pt",
-                description="YOLO model used by the segmentation backend",
-            ),
-            DeclareLaunchArgument(
                 "labelspace_name",
                 default_value="ade20k_full",
                 description="Semantic label-space name",
@@ -109,26 +99,9 @@ def generate_launch_description() -> LaunchDescription:
                 description="Visualization colormap CSV file",
             ),
             DeclareLaunchArgument(
-                "model_name",
-                default_value="mobile_sam.pt",
-                description="Legacy model-name argument",
-            ),
-            DeclareLaunchArgument(
-                "segmentation_model",
-                default_value="yoloe",
-                description=(
-                    "Open-vocabulary segmentation backend type"
-                ),
-            ),
-            DeclareLaunchArgument(
                 "segmentation_cuda",
                 default_value="true",
                 description="Use CUDA for segmentation inference",
-            ),
-            DeclareLaunchArgument(
-                "segmentation_model_name",
-                default_value="mobile_sam.pt",
-                description="Segmentation model name",
             ),
             DeclareLaunchArgument(
                 "labelspace_dir",
@@ -172,18 +145,12 @@ def generate_launch_description() -> LaunchDescription:
                             labelspace_file,
                         "label_grouping_path":
                             label_grouping_file,
-                        "model.segmentation.yolo_model_name":
-                            yolo_model_name,
                         "model.cuda":
                             segmentation_cuda,
                         "worker.min_separation_s":
                             min_separation_s,
-                        "model.segmentation.type":
-                            segmentation_model,
                         "recolor.colormap_path":
                             colormap_path,
-                        "model.segmentation.model_name":
-                            segmentation_model_name,
                         "playback_mode":
                             playback_mode,
                         "print_inference_time":
