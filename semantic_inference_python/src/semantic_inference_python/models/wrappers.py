@@ -40,7 +40,7 @@
 """Model wrappers for image segmentation."""
 
 import dataclasses
-from typing import List, Union, Tuple
+from typing import Dict, List, Union, Tuple
 
 import json
 import clip
@@ -1474,6 +1474,65 @@ class YOLOESegmentation(nn.Module):
         )
 
 
+class YOLOSegmentation(YOLOESegmentation):
+    """Fixed-vocabulary Ultralytics YOLO instance segmentation wrapper."""
+
+    def __init__(self, config, verbose=False):
+        nn.Module.__init__(self)
+        from ultralytics import YOLO
+
+        self.config = config
+        self.config.parse_groups()
+        model_name = os.path.expandvars(
+            os.path.expanduser(config.yolo_model_name)
+        )
+        self.yoloe = YOLO(model_name, task="segment")
+
+    @classmethod
+    def construct(cls, **kwargs):
+        """Load a fixed-vocabulary YOLO model from configuration."""
+        config = YOLOConfig()
+        config.update(kwargs)
+        return cls(config)
+
+    def forward(self, img, device=None):
+        """Segment an image and translate native model IDs into scene IDs."""
+        masks, boxes, labels, features, _, confidences = super().forward(
+            img,
+            device=device,
+        )
+        if masks is None or not self.config.label_mapping:
+            return masks, boxes, labels, features, (
+                None if masks is None else panoptic_image(masks, labels)
+            ), confidences
+
+        mapped_labels = torch.tensor(
+            [
+                self.config.label_mapping.get(int(label), int(label))
+                for label in labels
+            ],
+            dtype=labels.dtype,
+            device=labels.device,
+        )
+        keep = mapped_labels >= 0
+        masks = masks[keep]
+        boxes = boxes[keep]
+        mapped_labels = mapped_labels[keep]
+        confidences = confidences[keep]
+
+        if not torch.any(keep):
+            return None, None, None, None, None, None
+
+        return (
+            masks,
+            boxes,
+            mapped_labels,
+            features,
+            panoptic_image(masks, mapped_labels),
+            confidences,
+        )
+
+
 class YOLOSAMSegmentation(nn.Module):
     """YOLO + FastSAM wrapper."""
 
@@ -1710,6 +1769,40 @@ class YOLOEConfig(Config):
 
         :return: List of labels
         """
+        return [group.name for group in self.groups]
+
+
+@register_config("segmentation", name="yolo", constructor=YOLOSegmentation)
+@dataclasses.dataclass
+class YOLOConfig(Config):
+    """Configuration for fixed-vocabulary YOLO instance segmentation."""
+
+    yolo_model_name: str = "yolov8l-seg.pt"
+    confidence: float = 0.55
+    iou: float = 0.85
+    output_size: Union[int, List[int]] = 640
+    groups: List[GroupInfo] = dataclasses.field(default_factory=list)
+    # Native model class ID -> scene-graph semantic ID. A negative destination
+    # drops that class before it reaches the scene graph.
+    label_mapping: Dict[int, int] = dataclasses.field(default_factory=dict)
+    image_features: bool = False
+    verbose: bool = False
+
+    def parse_groups(self) -> None:
+        """Convert grouping dictionaries to GroupInfo objects."""
+        self.groups = [GroupInfo(**group) for group in self.groups]
+        self.label_mapping = {
+            int(source): int(destination)
+            for source, destination in self.label_mapping.items()
+        }
+
+    @classmethod
+    def load(cls, filepath):
+        """Load config from file."""
+        return Config.load(cls, filepath)
+
+    def get_labels(self) -> List[str]:
+        """Return trained class names in model-index order."""
         return [group.name for group in self.groups]
 
 

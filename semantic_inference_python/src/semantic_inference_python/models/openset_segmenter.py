@@ -553,7 +553,10 @@ class OpensetSegmenter(nn.Module):
                 mask=masks_np,
             )
             vis_img, _ = vis_result_fast(
-                rgb_img, curr_det, self.segmenter.config.get_labels(), color=colors
+                rgb_img,
+                curr_det,
+                self.id_to_name,
+                color=colors,
             )
 
         img = torch.from_numpy(rgb_img).to(self.device)

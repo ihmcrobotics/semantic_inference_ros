@@ -69,6 +69,8 @@ class OpensetSegmentationNode(Node):
             automatically_declare_parameters_from_overrides=True,
         )
 
+        self._label_id_to_name: Dict[int, str] = {}
+
         semantic_inference_ros.setup_ros_log_forwarding(
             node=self
         )
@@ -88,11 +90,23 @@ class OpensetSegmentationNode(Node):
             self.config.recolor
         )
 
-        id_to_name = {
-            class_id: class_name
-            for class_name, class_id
-            in self._recolor.name_to_id.items()
-        }
+        configured_groups = self.config.model.segmentation.groups
+        id_to_name = dict(self._label_id_to_name)
+        if not id_to_name:
+            id_to_name = {
+                class_id: (
+                    group["name"]
+                    if isinstance(group, dict)
+                    else group.name
+                )
+                for class_id, group in enumerate(configured_groups)
+            }
+        if not id_to_name:
+            id_to_name = {
+                class_id: class_name
+                for class_name, class_id
+                in self._recolor.name_to_id.items()
+            }
 
         self._model = models.OpensetSegmenter(
             self.config.model,
@@ -177,6 +191,13 @@ class OpensetSegmentationNode(Node):
                 labelspace_path
             )
 
+            label_names = labelspace_configuration.get("label_names", [])
+            if label_names:
+                self._label_id_to_name = {
+                    int(entry["label"]): str(entry["name"])
+                    for entry in label_names
+                }
+
             object_labels = labelspace_configuration.get(
                 "object_labels",
                 [],
@@ -199,10 +220,26 @@ class OpensetSegmentationNode(Node):
                 label_grouping_path
             )
 
-            raw_groups = label_grouping_configuration.get(
-                "groups",
-                [],
-            )
+            raw_groups = label_grouping_configuration.get("groups")
+            if raw_groups is None:
+                class_names = label_grouping_configuration.get("names", [])
+                if not isinstance(class_names, list):
+                    raise TypeError(
+                        f"The 'names' field in '{label_grouping_path}' "
+                        "must be a list."
+                    )
+                declared_count = label_grouping_configuration.get("nc")
+                if declared_count is not None and int(declared_count) != len(
+                    class_names
+                ):
+                    raise ValueError(
+                        f"The 'nc' value in '{label_grouping_path}' does not "
+                        "match the number of class names."
+                    )
+                raw_groups = [
+                    {"name": class_name, "labels": [class_id]}
+                    for class_id, class_name in enumerate(class_names)
+                ]
 
             if not isinstance(raw_groups, list):
                 raise TypeError(

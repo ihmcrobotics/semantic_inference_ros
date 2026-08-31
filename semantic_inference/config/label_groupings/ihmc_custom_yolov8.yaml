@@ -1,0 +1,19 @@
+---
+# Native output ordering for best_multi_08_22_2026.engine.
+names:
+  - robot_hand
+  - door_panel
+  - door_lever
+  - person
+  - charge
+  - traffic_barrier
+  - door_knob
+  - door_push_bar
+  - door_pull_handle
+  - trash_can
+  - bottle
+  - storage_container
+  - bucket
+  - shovel
+  - person_operator
+nc: 15

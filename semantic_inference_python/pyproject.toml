@@ -37,6 +37,11 @@ dependencies = [
   "ultralytics==8.4.121",
 ]
 
+[project.optional-dependencies]
+tensorrt = [
+  "tensorrt==11.2.1.2; platform_system == 'Linux' and platform_machine == 'x86_64'",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

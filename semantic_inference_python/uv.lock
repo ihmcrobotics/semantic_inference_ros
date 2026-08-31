@@ -928,7 +928,7 @@ name = "nvidia-cudnn-cu12"
 version = "9.1.0.70"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas-cu12" },
+    { name = "nvidia-cublas-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9f/fd/713452cd72343f682b1c7b9321e23829f00b842ceaedcda96e742ea0b0b3/nvidia_cudnn_cu12-9.1.0.70-py3-none-manylinux2014_x86_64.whl", hash = "sha256:165764f44ef8c61fcdfdfdbe769d687e06374059fbb388b6c89ecb0e28793a6f", size = 664752741, upload-time = "2024-04-22T15:24:15.253Z" },
@@ -955,9 +955,9 @@ name = "nvidia-cusolver-cu12"
 version = "11.4.5.107"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas-cu12" },
-    { name = "nvidia-cusparse-cu12" },
-    { name = "nvidia-nvjitlink-cu12" },
+    { name = "nvidia-cublas-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "nvidia-cusparse-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/bc/1d/8de1e5c67099015c834315e333911273a8c6aaba78923dd1d1e25fc5f217/nvidia_cusolver_cu12-11.4.5.107-py3-none-manylinux1_x86_64.whl", hash = "sha256:8a7ec542f0412294b15072fa7dab71d31334014a69f953004ea7a118206fe0dd", size = 124161928, upload-time = "2023-04-19T15:51:25.781Z" },
@@ -968,7 +968,7 @@ name = "nvidia-cusparse-cu12"
 version = "12.1.0.106"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/65/5b/cfaeebf25cd9fdec14338ccb16f6b2c4c7fa9163aefcf057d86b9cc248bb/nvidia_cusparse_cu12-12.1.0.106-py3-none-manylinux1_x86_64.whl", hash = "sha256:f3b50f42cf363f86ab21f720998517a659a48131e8d538dc02f8768237bd884c", size = 195958278, upload-time = "2023-04-19T15:51:49.939Z" },
@@ -1654,6 +1654,11 @@ dependencies = [
     { name = "ultralytics" },
 ]
 
+[package.optional-dependencies]
+tensorrt = [
+    { name = "tensorrt", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "accelerate", specifier = "==1.0.1" },
@@ -1675,12 +1680,14 @@ requires-dist = [
     { name = "seaborn", specifier = "==0.13.2" },
     { name = "sentencepiece", specifier = "==0.2.0" },
     { name = "supervision", specifier = "==0.18.0" },
+    { name = "tensorrt", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'tensorrt'", specifier = "==11.2.1.2" },
     { name = "timm", specifier = "==1.0.11" },
     { name = "torch", specifier = "==2.4.1" },
     { name = "torchvision", specifier = "==0.19.1" },
     { name = "transformers", specifier = "==4.57.6" },
     { name = "ultralytics", specifier = "==8.4.121" },
 ]
+provides-extras = ["tensorrt"]
 
 [[package]]
 name = "sentencepiece"
@@ -1762,6 +1769,41 @@ sdist = { url = "https://files.pythonhosted.org/packages/83/d3/803453b36afefb7c2
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a2/09/77d55d46fd61b4a135c444fc97158ef34a095e5681d0a6c10b75bf356191/sympy-1.14.0-py3-none-any.whl", hash = "sha256:e091cc3e99d2141a0ba2847328f5479b05d94a6635cb96148ccb3f34671bd8f5", size = 6299353, upload-time = "2025-04-27T18:04:59.103Z" },
 ]
+
+[[package]]
+name = "tensorrt"
+version = "11.2.1.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "tensorrt-cu13", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2c/97/dcd98f6e89965265ec62e201c09e2f92f3ef864bf5a721f425bee297b23e/tensorrt-11.2.1.2.tar.gz", hash = "sha256:adf00e5ee6d87e1bf991dfefad64f939b5639712ca79aac1d6c3cc88935c8088", size = 16643, upload-time = "2026-07-30T19:10:50.702Z" }
+
+[[package]]
+name = "tensorrt-cu13"
+version = "11.2.1.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "tensorrt-cu13-bindings", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "tensorrt-cu13-libs", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2d/68/82741621fc5733459d582c5086385e4d5da727833af5aa40bf251a5dbc73/tensorrt_cu13-11.2.1.2.tar.gz", hash = "sha256:5a15c04615c59338d8f95205f5a24e7dfe18086d4a3449ddd5992e75f0f829b9", size = 17973, upload-time = "2026-07-30T19:16:37.228Z" }
+
+[[package]]
+name = "tensorrt-cu13-bindings"
+version = "11.2.1.2"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/45/e4/19d92435fb102320ece532fc9df58f0e39deee675f5b5d204dfc667a4ed3/tensorrt_cu13_bindings-11.2.1.2-cp312-none-manylinux_2_28_x86_64.whl", hash = "sha256:b3ba3b47a13b8c37c6f55e72502ddc2b369adc7f4c3e49eb9398836a204669ae", size = 1253266, upload-time = "2026-07-30T19:19:09.046Z" },
+    { url = "https://files.pythonhosted.org/packages/a0/95/38abad5a69de3ad8aa05572fe659161c3792f5beea876587724863266e26/tensorrt_cu13_bindings-11.2.1.2-cp313-none-manylinux_2_28_x86_64.whl", hash = "sha256:4c4370517a6d7cdcb21c0463bf12fd8190a629a05276e82ca0eccc76f4e1c176", size = 1252058, upload-time = "2026-07-30T19:20:18.582Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/b2/436022da948a9121dae7a69eb0bcb10533bfa7146f9353146d454f0482b1/tensorrt_cu13_bindings-11.2.1.2-cp314-none-manylinux_2_28_x86_64.whl", hash = "sha256:837d512ee78f79c309bd654928146837c2a4dc5e2c81e6b2f9af7d0b04f7d4aa", size = 1258252, upload-time = "2026-07-30T19:21:17.08Z" },
+]
+
+[[package]]
+name = "tensorrt-cu13-libs"
+version = "11.2.1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/2c/5f/e315fbb8c4b7091e2a2b21bc50c764d4eef25196eb0897564e6809237729/tensorrt_cu13_libs-11.2.1.2.tar.gz", hash = "sha256:253b0850639295e43f06119c40711e2c9cf699bc9e5ff0e11bf44a1a4b266f74", size = 15497, upload-time = "2026-07-30T19:21:10.8Z" }
 
 [[package]]
 name = "timm"
@@ -1891,7 +1933,7 @@ name = "triton"
 version = "3.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "filelock" },
+    { name = "filelock", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fe/7b/7757205dee3628f75e7991021d15cd1bd0c9b044ca9affe99b50879fc0e1/triton-3.0.0-1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:34e509deb77f1c067d8640725ef00c5cbfcb2052a1a3cb6a6d343841f92624eb", size = 209464695, upload-time = "2024-07-19T20:57:22.532Z" },

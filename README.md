@@ -37,6 +37,17 @@ uv venv \
 uv sync --frozen
 ```
 
+On an x86-64 NVIDIA deployment that runs `.engine` models through the Python
+segmentation node, install the locked TensorRT runtime extra:
+
+```bash
+uv sync --frozen --extra tensorrt
+```
+
+The isolated `.venv-tensorrt-export` remains the model-conversion environment;
+the `tensorrt` extra only makes compatible TensorRT engines loadable from the
+ROS runtime `.venv`.
+
 uv may report `No requires-python value found ... Defaulting to >=3.12`.
 Python 3.12 is selected explicitly above; the metadata is intentionally omitted
 for compatibility with ROS Jazzy's colcon/setuptools package introspection.
@@ -114,6 +125,14 @@ ros2 launch semantic_inference_ros \
 # Closed vocabulary: ADE20K EfficientViT semantic segmentation
 ros2 launch semantic_inference_ros \
   closed_vocabulary_segmentation.launch.py
+
+# Fixed-vocabulary instance segmentation: pretrained COCO YOLOv8
+ros2 launch semantic_inference_ros \
+  pretrained_yolov8_segmentation.launch.py
+
+# Fixed-vocabulary instance segmentation: custom-trained YOLOv8
+ros2 launch semantic_inference_ros \
+  custom_yolov8_segmentation.launch.py
 ```
 
 Open-vocabulary mode uses the Alex label space configured in the selected
@@ -237,6 +256,48 @@ ros2 launch semantic_inference_ros \
   open_vocabulary_segmentation.launch.py
 ```
 
+### Fixed-vocabulary YOLOv8 instance segmentation
+
+YOLOv8-seg is closed vocabulary, but it is not the same interface as the
+closed-vocabulary ADE20K backend. ADE20K publishes one semantic class per
+pixel; YOLOv8 publishes object detections and instance masks. The YOLOv8 paths
+therefore share the Python instance-segmentation node while using a dedicated
+`yolo` wrapper and fixed class lists.
+
+Two no-argument launches prevent their class indices from being mixed:
+
+```bash
+# 80 COCO classes, 640-by-640 input
+ros2 launch semantic_inference_ros \
+  pretrained_yolov8_segmentation.launch.py
+
+# 15 custom classes, 736-by-1280 input
+ros2 launch semantic_inference_ros \
+  custom_yolov8_segmentation.launch.py
+```
+
+Each launch loads its version-controlled native class ordering from
+`semantic_inference/config/label_groupings/` and validates the declared class
+count. These small YAML files are installed with the ROS package; they are not
+downloaded as model artifacts. The pretrained and custom class indices are
+local to their respective models. The custom launch explicitly translates its native
+15-class output into `ihmc_custom_yolov8_label_space.yaml`, which extends the
+73-class Alex space. The translation:
+
+- discards `robot_hand` before scene-graph integration;
+- maps `person` to the existing Alex label while retaining `person_operator`
+  as a distinct dynamic class for designated personnel wearing a vest;
+- maps `bottle` and `trash_can` to their existing Alex equivalents; and
+- retains the door components and other IHMC classes under distinct IDs.
+
+For door semantics, `door` denotes the complete assembly, `door_panel` denotes
+the movable panel, and `door_frame` denotes the fixed structure and preferred
+navigation reference. The current custom model detects `door_panel` and door
+hardware but does not detect `door_frame`. Consequently, it cannot yet create
+a stable composite `door` object from vision alone. A future model must detect
+the frame, after which spatial association can attach the panel and hardware to
+the stable door assembly.
+
 The no-argument open-vocabulary launch selects the Alex label-space and grouping
 files for the prebuilt Alex engines. Any replacement fixed-class engine must be
 exported with the same ordered class list, or its matching label-space and
@@ -246,15 +307,33 @@ Segmentation artifacts are organized by backend:
 
 ```text
 $SCENE_GRAPH_ASSETS/models/segmentation/
-├── yoloe/
-├── yolow/
-├── fastsam/
-│   ├── FastSAM-x.pt
-│   └── FastSAM-x.pt.sha256
-└── ade20k/
-    ├── ade20k-efficientvit_seg_l2.onnx
-    └── ade20k-efficientvit_seg_l2.onnx.sha256
+├── pretrained/
+│   ├── yoloe/
+│   ├── yolov8/
+│   ├── yolow/
+│   ├── fastsam/
+│   └── ade20k/
+└── custom_trained/
+    ├── yoloe/
+    ├── yolov8/
+    │   └── MODEL_RELEASE/
+    │       ├── MODEL_RELEASE.engine
+    │       ├── MODEL_RELEASE.engine.sha256
+    │       ├── class_names.yaml
+    │       └── class_names.yaml.sha256
+    └── yolow/
 ```
+
+`pretrained` contains upstream checkpoints and artifacts derived from them.
+Embedding a deployment label list during export does not make a model
+custom-trained. `custom_trained` is reserved for checkpoints trained or
+fine-tuned on an organization-specific dataset and their derived artifacts.
+Each custom release has its own immutable directory so a new training run does
+not silently replace an older model or checksum. Select the active release in
+`semantic_inference_ros/config/yolov8_custom_segmentation.yaml`.
+Keep the corresponding class-order YAML under
+`semantic_inference/config/label_groupings/` synchronized with every
+fixed-vocabulary model so its output indices remain auditable.
 
 YOLO-World supplies open-vocabulary detections but not instance masks, so the
 `yolosam` configuration additionally loads the local FastSAM checkpoint to
@@ -308,6 +387,104 @@ producing the static engine.
 The exporter creates the customized checkpoint, ONNX representation, and
 TensorRT engine in the output directory. Run a representative inference test
 on the resulting engine before publishing it.
+
+##### Fixed-vocabulary YOLOv8 development workflow
+
+The following steps are for model developers and debugging. A normal runtime
+installation should use already prepared artifacts.
+
+For a newly trained custom model, begin with one immutable release directory.
+The directory name and ONNX basename must identify the training release:
+
+```text
+$SCENE_GRAPH_ASSETS/models/segmentation/custom_trained/yolov8/
+└── best_multi_08_22_2026/
+    ├── best_multi_08_22_2026.onnx
+    └── class_names.yaml
+```
+
+Verify that `class_names.yaml` lists classes in exactly the same index order as
+the ONNX output. Then build the engine on the target NVIDIA deployment class:
+
+```bash
+.venv-tensorrt-export/bin/python \
+  src/semantic_inference_ros/semantic_inference_python/scripts/build_tensorrt_engine.py \
+  --onnx "$SCENE_GRAPH_ASSETS/models/segmentation/custom_trained/yolov8/best_multi_08_22_2026/best_multi_08_22_2026.onnx" \
+  --output "$SCENE_GRAPH_ASSETS/models/segmentation/custom_trained/yolov8/best_multi_08_22_2026/best_multi_08_22_2026.engine" \
+  --fp16 \
+  --workspace-gib 4
+
+cd "$SCENE_GRAPH_ASSETS/models/segmentation/custom_trained/yolov8/best_multi_08_22_2026"
+sha256sum best_multi_08_22_2026.engine \
+  > best_multi_08_22_2026.engine.sha256
+sha256sum class_names.yaml > class_names.yaml.sha256
+```
+
+The completed runtime release is:
+
+```text
+best_multi_08_22_2026/
+├── best_multi_08_22_2026.onnx
+├── best_multi_08_22_2026.engine
+├── best_multi_08_22_2026.engine.sha256
+├── class_names.yaml
+└── class_names.yaml.sha256
+```
+
+Publish the engine, class file, and both checksum sidecars as one release.
+Before selecting the release, copy its class order into a reviewed YAML under
+`semantic_inference/config/label_groupings/`, update the native-to-Hydra label
+mapping if any class or index changed, and point
+`semantic_inference_ros/config/yolov8_custom_segmentation.yaml` at the new
+engine. Rebuild `semantic_inference` and `semantic_inference_ros` after changing
+these source-controlled files. The private IHMC integration README describes
+publishing the engine and registering its Drive IDs for automatic provisioning.
+
+For an upstream PyTorch checkpoint, retain the `.pt` source and export a
+static-shape FP32 ONNX model. This example uses a 640-by-640 input:
+
+```bash
+export SCENE_GRAPH_ASSETS="${SCENE_GRAPH_ASSETS:-$PWD/scene_graph_assets}"
+
+.venv-tensorrt-export/bin/python -c "from ultralytics import YOLO; YOLO('$SCENE_GRAPH_ASSETS/models/segmentation/pretrained/yolov8/yolov8l-seg.pt').export(format='onnx', imgsz=640, batch=1, dynamic=False, simplify=True, opset=19, device='cpu')"
+```
+
+Convert the resulting ONNX model to an FP16 TensorRT engine on the target
+NVIDIA platform:
+
+```bash
+.venv-tensorrt-export/bin/python \
+  src/semantic_inference_ros/semantic_inference_python/scripts/build_tensorrt_engine.py \
+  --onnx "$SCENE_GRAPH_ASSETS/models/segmentation/pretrained/yolov8/yolov8l-seg.onnx" \
+  --output "$SCENE_GRAPH_ASSETS/models/segmentation/pretrained/yolov8/yolov8l-seg.engine" \
+  --fp16 \
+  --workspace-gib 4
+```
+
+When training has already produced an ONNX model, skip the `.pt`-to-ONNX step
+and build directly from that file:
+
+```bash
+.venv-tensorrt-export/bin/python \
+  src/semantic_inference_ros/semantic_inference_python/scripts/build_tensorrt_engine.py \
+  --onnx "$SCENE_GRAPH_ASSETS/models/segmentation/custom_trained/yolov8/MODEL/MODEL.onnx" \
+  --output "$SCENE_GRAPH_ASSETS/models/segmentation/custom_trained/yolov8/MODEL/MODEL.engine" \
+  --fp16 \
+  --workspace-gib 4
+```
+
+For TensorRT 11, the builder converts the graph to FP16 in memory, builds a
+strongly typed network, and embeds the ONNX metadata in the engine wrapper.
+The source ONNX file remains unchanged. Preserving metadata is required by the
+Ultralytics runtime to recover the segmentation task, class names, image size,
+and output-decoding configuration.
+
+The original Hydra closed-vocabulary C++ backend accepts ONNX models that
+directly output one integer label per pixel. YOLOv8-seg does not have that
+interface: it outputs detections, mask coefficients, and mask prototypes.
+Consequently, YOLOv8-seg artifacts must run through the YOLO Python wrapper,
+which performs decoding, confidence filtering, NMS, and panoptic-mask
+construction before publishing results to Hydra.
 
 Generate one checksum sidecar per published artifact:
 

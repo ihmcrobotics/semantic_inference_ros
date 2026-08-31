@@ -1,6 +1,7 @@
 """Local Hugging Face Qwen client for structured text generation."""
 
 from dataclasses import dataclass
+import os
 from typing import Optional, Tuple
 
 import torch
@@ -41,6 +42,7 @@ class QwenClient:
         )
         self.dtype = self._resolve_dtype(config.dtype)
         model_source = config.model_path or config.model_name
+        model_source = os.path.expandvars(os.path.expanduser(model_source))
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_source)
         self.model = AutoModelForCausalLM.from_pretrained(

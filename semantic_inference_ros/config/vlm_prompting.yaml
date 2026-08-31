@@ -1,7 +1,7 @@
 vlm_prompt:
   type: cosmos_reason2
   model_name: nvidia/Cosmos-Reason2-2B
-  model_path: ""
+  model_path: $SCENE_GRAPH_ASSETS/models/vlm/cosmos-reason2-2b
   processor_path: ""
   dtype: bfloat16
   image_grid_thw: [1, 28, 28]

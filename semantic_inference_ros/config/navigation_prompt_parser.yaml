@@ -2,7 +2,7 @@ navigation_prompter:
   type: qwen
   client_config:
     model_name: Qwen/Qwen3-1.7B
-    model_path: ""
+    model_path: $SCENE_GRAPH_ASSETS/models/llm/qwen3-1.7b
     dtype: bfloat16
     use_cuda: true
     max_new_tokens: 256

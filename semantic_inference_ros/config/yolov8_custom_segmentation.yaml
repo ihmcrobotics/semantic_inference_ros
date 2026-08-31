@@ -1,0 +1,58 @@
+---
+model:
+  segmentation:
+    type: yolo
+    yolo_model_name: $SCENE_GRAPH_ASSETS/models/segmentation/custom_trained/yolov8/best_multi_08_22_2026/best_multi_08_22_2026.engine
+    confidence: 0.4
+    iou: 0.85
+    output_size: [736, 1280]
+    verbose: false
+    # Native custom-model ID -> unified IHMC/Alex semantic ID.
+    # robot_hand (0) is removed; person_operator (14) remains distinct.
+    label_mapping:
+      0: -1
+      1: 73
+      2: 74
+      3: 8
+      4: 75
+      5: 76
+      6: 77
+      7: 78
+      8: 79
+      9: 61
+      10: 47
+      11: 81
+      12: 82
+      13: 83
+      14: 84
+
+  refinement:
+    dilate_masks: true
+
+  clip_model:
+    type: open_clip
+    model_name: ViT-B-32
+    model_path: ""
+    tokenizer_name: ViT-B-32
+    pretrained: $SCENE_GRAPH_ASSETS/models/vlm_embedding_encoder/openclip/laion-clip-vit-b-32-s34b-b79k.safetensors
+
+  use_dense: false
+  dense_ratio: 0.9
+  max_batch: 10
+  text_embeddings: true
+  box_embeddings: false
+  mask_embeddings: true
+  text_embeddings_weight: 0.9
+  box_embeddings_weight: 0.0
+  mask_embeddings_weight: 0.1
+  cuda: true
+  dense_representation_radius_m: 7.0
+  min_depth: 0.05
+  pub_detections: true
+
+worker:
+  queue_size: 1
+  min_separation_s: 0.5
+
+playback_mode: false
+print_inference_time: false
