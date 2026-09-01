@@ -82,6 +82,9 @@ try:
     cuda.init()
     device = cuda.Device(0)
     CTX = device.make_context()
+    # make_context() also pushes the context on the calling thread. Inference
+    # sites push/pop CTX explicitly, so leave it inactive after construction.
+    CTX.pop()
     TRT_LOGGER = trt.Logger(trt.Logger.INFO)
     runtime = trt.Runtime(TRT_LOGGER)
 except ImportError:
