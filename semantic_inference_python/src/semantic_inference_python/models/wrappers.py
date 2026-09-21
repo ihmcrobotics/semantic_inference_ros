@@ -1453,14 +1453,11 @@ class YOLOESegmentation(nn.Module):
                 None,
             )
         start_time = time.time()
-        masks_tensor = (
-            torch.from_numpy(
-                ultralytics.utils.ops.scale_image(
-                    results_yolo[0].masks.data.permute(1, 2, 0).cpu().numpy(), img.shape
-                )
-            ).permute(2, 0, 1)
-            > 0.5
-        )
+        # Scale the NCHW mask stack directly, removing letterbox padding on the
+        # prediction device. scale_image was removed in newer Ultralytics releases.
+        masks_tensor = ultralytics.utils.ops.scale_masks(
+            results_yolo[0].masks.data.unsqueeze(0), img.shape[:2]
+        ).squeeze(0) > 0.5
         masks_tensor = masks_tensor.to(device)
         if self.config.verbose:
             LOGGER.info(

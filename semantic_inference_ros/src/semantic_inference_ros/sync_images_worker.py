@@ -58,6 +58,7 @@ class SyncImagesWorkerConfig(Config):
     """Configuration for the synchronized image worker."""
 
     queue_size: int = 1
+    sync_queue_size: int = 10
     min_separation_s: float = 0.0
 
     @classmethod
@@ -71,6 +72,9 @@ class SyncImagesWorkerConfig(Config):
             raise ValueError(
                 f"queue_size must be greater than zero, got {self.queue_size}."
             )
+
+        if self.sync_queue_size <= 0:
+            raise ValueError("sync_queue_size must be greater than zero")
 
         if self.min_separation_s < 0.0:
             raise ValueError(
@@ -161,14 +165,14 @@ class SyncImagesWorker:
             self._synchronizer = (
                 message_filters.ApproximateTimeSynchronizer(
                     self._subscribers,
-                    queue_size=config.queue_size,
+                    queue_size=config.sync_queue_size,
                     slop=sync_slop_s,
                 )
             )
         else:
             self._synchronizer = message_filters.TimeSynchronizer(
                 self._subscribers,
-                queue_size=config.queue_size,
+                queue_size=config.sync_queue_size,
             )
 
         self._synchronizer.registerCallback(

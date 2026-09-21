@@ -88,12 +88,16 @@ class Conversions:
             # Color images are expected to be in RGB format
             # Depth images are expected to be in 32FC1 format
             image = cls.bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")
-            if msg.encoding == "16UC1":
+            if msg.encoding in ("16UC1", "mono16"):
                 # Convert depth image from 16-bit unsigned int to float32
                 image = image.astype(np.float32) / 1000.0
             elif msg.encoding == "32FC1":
                 # Ensure depth image is in meters
                 image = image.astype(np.float32)
+            elif msg.encoding == "bgra8":
+                image = cv2.cvtColor(image, cv2.COLOR_BGRA2RGB)
+            elif msg.encoding == "rgba8":
+                image = cv2.cvtColor(image, cv2.COLOR_RGBA2RGB)
             elif msg.encoding == "bgr8":
                 # Convert BGR to RGB
                 image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
