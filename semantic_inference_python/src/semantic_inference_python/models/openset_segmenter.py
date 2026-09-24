@@ -49,7 +49,7 @@ from semantic_inference_python.models.patch_extractor import (
     default_normalization_parameters,
 )
 from semantic_inference_python.models.patch_extractor import center_crop
-from semantic_inference_python.models.wrappers import vis_result_fast
+from semantic_inference_python.models.wrappers import vis_result_fast, YOLOESegmentation
 
 import torch
 import torch.nn.functional as F
@@ -246,6 +246,10 @@ class OpensetSegmenter(nn.Module):
         self.config = config
         self.id_to_name = id_to_name
         self.segmenter = self.config.segmentation.create()
+        if type(self.segmenter) is YOLOESegmentation:
+            if not id_to_name:
+                raise ValueError("YOLOE requires the scene label ID-to-name mapping")
+            self.segmenter.scene_label_names = dict(id_to_name)
         self.segment_refinement = SegmentRefinement(config.refinement)
         self.encoder = self.config.clip_model.create()
 

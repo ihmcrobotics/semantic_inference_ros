@@ -68,6 +68,7 @@ from transformers.models.qwen3_vl.configuration_qwen3_vl import (
 )
 from semantic_inference_python import root_path
 from semantic_inference_python.config import Config, register_config
+from semantic_inference_python.models.label_ids import model_to_scene_ids
 from semantic_inference_python.models.instruct_blip import (
     InstructBlipForConditionalGeneration,
 )
@@ -1442,6 +1443,13 @@ class YOLOESegmentation(nn.Module):
             )
 
         labels = results_yolo[0].boxes.cls.to(torch.int)
+        scene_names = getattr(self, "scene_label_names", None)
+        if scene_names is not None:
+            # Engine indices are compact (e.g. door=3), unlike scene IDs (door=9).
+            # Remap before refinement, panoptic packing, colors, text and CLIP.
+            mapping = model_to_scene_ids(results_yolo[0].names, scene_names)
+            labels = torch.tensor([mapping[int(label)] for label in labels],
+                                  dtype=labels.dtype, device=labels.device)
         xyxy_tensor = results_yolo[0].boxes.xyxy
         if len(xyxy_tensor) == 0:
             return (
