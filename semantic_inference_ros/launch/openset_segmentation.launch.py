@@ -131,6 +131,9 @@ def generate_launch_description() -> LaunchDescription:
                 default_value="/camera/color/camera_info",
                 description="Input RGB camera-info topic",
             ),
+            DeclareLaunchArgument("publish_semantic_image", default_value="false"),
+            DeclareLaunchArgument("enable_clip", default_value="true",
+                                  description="Disable only for segmentation performance tests"),
             Node(
                 package="semantic_inference_ros",
                 executable="openset_segmentation_node",
@@ -145,6 +148,8 @@ def generate_launch_description() -> LaunchDescription:
                             labelspace_file,
                         "label_grouping_path":
                             label_grouping_file,
+                        "publish_semantic_image": LaunchConfiguration("publish_semantic_image"),
+                        "model.enable_clip": LaunchConfiguration("enable_clip"),
                         "model.cuda":
                             segmentation_cuda,
                         "worker.min_separation_s":

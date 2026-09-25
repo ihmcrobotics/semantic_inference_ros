@@ -183,9 +183,10 @@ class Conversions:
         """
         msg = semantic_inference_msgs.msg.FeatureImage()
         msg.header = header
-        if results.instances is None:
+        instances = results.instances
+        if instances is None:
             return msg
-        msg.image = cls.bridge.cv2_to_imgmsg(results.instances, header=header)
+        msg.image = cls.bridge.cv2_to_imgmsg(instances, header=header)
         msg.mask_ids = results.get_ids()
         msg.features = [cls.to_feature(x) for x in results.features]
         return msg

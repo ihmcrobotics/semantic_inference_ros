@@ -49,7 +49,7 @@ from semantic_inference_python.models.patch_extractor import (
     default_normalization_parameters,
 )
 from semantic_inference_python.models.patch_extractor import center_crop
-from semantic_inference_python.models.wrappers import vis_result_fast, YOLOESegmentation
+from semantic_inference_python.models.wrappers import vis_result_fast, YOLOESegmentation, OpenClipWrapper, TRTInferenceCLIPVision
 
 import torch
 import torch.nn.functional as F
@@ -213,6 +213,7 @@ class OpensetSegmenterConfig(Config):
 
     clip_model: Any = config_field("clip", default="clip")
     segmentation: Any = config_field("segmentation", default="fastsam")
+    enable_clip: bool = True
     use_dense: bool = False
     dense_ratio: float = 0.9
     max_batch: int = 10
@@ -245,6 +246,7 @@ class OpensetSegmenter(nn.Module):
 
         self.config = config
         self.id_to_name = id_to_name
+        self._text_embedding_cache = {}
         self.segmenter = self.config.segmentation.create()
         if type(self.segmenter) is YOLOESegmentation:
             if not id_to_name:
@@ -271,6 +273,7 @@ class OpensetSegmenter(nn.Module):
     def to_device(self, device):
         """Move model to device."""
         self._canary_param = nn.Parameter(torch.empty(0).to(device))
+        self._text_embedding_cache.clear()
         self.segmenter.to_device(device)
         self.encoder.to_device(device)
         self.segment_refinement.to(device)
@@ -315,6 +318,21 @@ class OpensetSegmenter(nn.Module):
     def device(self):
         """Get current model device."""
         return self._canary_param.device
+
+    def _encode_class_names(self, class_names):
+        """Reuse fixed class embeddings during inference; never cache training."""
+        if self.training or torch.is_grad_enabled():
+            self._text_embedding_cache.clear()
+            return self.encoder.embed_text(class_names)
+        missing = list(dict.fromkeys(
+            name for name in class_names if name not in self._text_embedding_cache
+        ))
+        if missing:
+            embeddings = self.encoder.embed_text(missing)
+            self._text_embedding_cache.update(
+                (name, embedding.detach()) for name, embedding in zip(missing, embeddings)
+            )
+        return torch.stack([self._text_embedding_cache[name] for name in class_names])
 
     def encode(self, img, depth, masks, boxes, labels, feature_image, panoptic_image):
         """Compute language embeddings for each segment."""
@@ -363,6 +381,22 @@ class OpensetSegmenter(nn.Module):
             logger.info(
                 f"[Open vocabulary node] Mask filtering time: {(time.time() - start_time) * 1000:.3f} ms"
             )
+        if not self.config.enable_clip:
+            # Keep the same object selection without constructing unused CLIP patches.
+            object_labels = torch.stack(object_labels)
+            if object_masks.shape[0] > self.config.max_batch:
+                choice = torch.from_numpy(np.random.choice(
+                    object_masks.shape[0], self.config.max_batch, replace=False
+                )).to(self.device)
+                object_masks = object_masks[choice]
+                object_boxes = object_boxes[choice]
+                object_labels = object_labels[choice]
+            return Results(
+                object_masks.detach().cpu(), panoptic_image.detach().cpu(),
+                object_boxes.detach().cpu(), torch.empty(0), None, None, None,
+                object_labels.detach().cpu(), None, None,
+            )
+
         masks_to_use = object_masks if self.dense_encoder is None else None
         start_time = time.time()
         patch_boxes, patch_masks = self.patch_extractor(
@@ -445,13 +479,25 @@ class OpensetSegmenter(nn.Module):
         start_time = time.time()
         if self.dense_encoder is None:
             assert patch_masks is not None
-            result = self.encoder(torch.cat([patch_boxes, clip_img.unsqueeze(0)]))
-            features += result[:num_patches] * self.config.box_embeddings_weight
+            # PyTorch OpenCLIP accepts variable batches. Keep the existing batch
+            # shape for fixed-shape TensorRT engines and other encoder types.
+            skip_boxes = (
+                self.config.box_embeddings_weight == 0
+                and isinstance(self.encoder, OpenClipWrapper)
+                and not isinstance(self.encoder.model, TRTInferenceCLIPVision)
+                and not self.training
+            )
+            visual_inputs = clip_img.unsqueeze(0) if skip_boxes else torch.cat(
+                [patch_boxes, clip_img.unsqueeze(0)]
+            )
+            result = self.encoder(visual_inputs)
+            if not skip_boxes:
+                features += result[:num_patches] * self.config.box_embeddings_weight
             img_embedding = torch.squeeze(result[-1])
             if self.config.text_embeddings:
                 class_names = [self.id_to_name[label.item()] for label in object_labels]
                 features += (
-                    self.encoder.embed_text(class_names)[:num_patches]
+                    self._encode_class_names(class_names)[:num_patches]
                     * self.config.text_embeddings_weight
                 )
             if self.config.mask_embeddings:
