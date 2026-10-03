@@ -1,3 +1,6 @@
+# Copyright (c) 2026, IHMC Robotics Lab.
+# All rights reserved.
+
 """Regression checks for compact exported-engine IDs versus sparse scene IDs."""
 import unittest
 from semantic_inference_python.models.label_ids import model_to_scene_ids

@@ -1,3 +1,6 @@
+# Copyright (c) 2026, IHMC Robotics Lab.
+# All rights reserved.
+
 """Regression checks for inference caching and instance-image conversion."""
 
 import numpy as np

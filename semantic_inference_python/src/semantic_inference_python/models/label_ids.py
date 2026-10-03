@@ -1,3 +1,6 @@
+# Copyright (c) 2026, IHMC Robotics Lab.
+# All rights reserved.
+
 """Translate model-local class indices to the scene's semantic label IDs."""
 
 
